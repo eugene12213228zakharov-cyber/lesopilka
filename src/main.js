@@ -1,0 +1,84 @@
+'use strict';
+// Запуск: сохранение, офлайн-доход, игровой цикл.
+
+const SAVE_KEY = 'lesopilka_save_v1';
+const STEP = 1 / 60;
+
+function readSave() {
+  try { const t = localStorage.getItem(SAVE_KEY); return t ? JSON.parse(t) : null; } catch (e) { return null; }
+}
+function writeSave(game) {
+  if (window.__noSave) return;
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(game.toSave())); } catch (e) { /* хранилище недоступно — играем без сохранения */ }
+}
+
+// заменить сохранение (загрузка из кода / начать заново) и перезапустить страницу
+window.lesopilkaReplace = (data) => {
+  window.__noSave = true;
+  try { if (data) localStorage.setItem(SAVE_KEY, JSON.stringify(data)); else localStorage.removeItem(SAVE_KEY); } catch (e) { /* ничего */ }
+  location.reload();
+};
+
+(function boot() {
+  const save = readSave();
+  const game = new Game(save);
+  const sfx = new Sfx();
+  const view = new View($('c'), game, $('labels'));
+  const ui = new UI(game, sfx);
+  const input = new Input($('c'), game, view, ui, sfx);
+  window.__game = game;
+  window.__view = view;
+  window.__input = input;
+  $('loading').remove();
+  // отладка: ?bot=1 — играет бот, ?speed=8 — ускорение времени
+  const qs = new URLSearchParams(location.search);
+  const bot = qs.get('bot') ? new Bot(game) : null;
+  const speed = clamp(+qs.get('speed') || 1, 1, 50);
+  if (bot || speed > 1) window.__noSave = true;
+
+  // перемотка времени, пока игры не было на экране
+  const catchUp = (sec) => {
+    if (sec < 30) return;
+    const floor0 = game.s.floor;
+    const r = game.fastForward(Math.min(sec, TUNE.offlineCap));
+    r.capped = sec > TUNE.offlineCap;
+    r.floors = game.s.floor - floor0;
+    game.events.length = 0;
+    if (r.money >= 1 || r.floors > 0) ui.showOffline(r);
+  };
+  if (save && save.savedAt) catchUp((Date.now() - save.savedAt) / 1000);
+  else if (!save && !bot) ui.showWelcome();
+
+  let last = performance.now(), acc = 0, saveT = 0, hiddenAt = 0;
+  const loop = (now) => {
+    let dt = (now - last) / 1000;
+    last = now;
+    if (dt > 0.25) dt = 0.25;
+    if (!bot) input.update();
+    acc += dt * speed;
+    let n = 0;
+    while (acc >= STEP && n < 20 * speed) { if (bot) bot.step(STEP); game.step(STEP); acc -= STEP; n++; }
+    if (n >= 20 * speed) acc = 0;
+    for (const e of game.events) { view.onEvent(e); ui.onEvent(e); sfx.onEvent(e, game); }
+    game.events.length = 0;
+    view.frame(dt);
+    ui.update(dt);
+    saveT += dt;
+    if (saveT > 10) { saveT = 0; writeSave(game); }
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { hiddenAt = Date.now(); writeSave(game); }
+    else if (hiddenAt) {
+      const sec = (Date.now() - hiddenAt) / 1000;
+      hiddenAt = 0;
+      last = performance.now();
+      catchUp(sec);
+    }
+  });
+  window.addEventListener('pagehide', () => writeSave(game));
+  window.addEventListener('beforeunload', () => writeSave(game));
+  window.addEventListener('resize', () => view.resize());
+})();
