@@ -15,15 +15,18 @@ const MODEL_OF = {
   tree: 'nature-kit/tree_pineRoundA',
   stump: 'nature-kit/stump_round',
   decorTrees: ['nature-kit/tree_pineRoundA', 'nature-kit/tree_pineDefaultA', 'nature-kit/tree_pineRoundC', 'nature-kit/tree_default', 'nature-kit/tree_oak', 'nature-kit/tree_fat'],
-  items: { log: 'nature-kit/log', chair: 'furniture-kit/chairCushion', table: 'furniture-kit/table', wardrobe: 'furniture-kit/bookcaseClosedDoors', box: 'furniture-kit/cardboardBoxClosed' },
-  truck: { log: 'car-kit/delivery-flat', opt: 'car-kit/delivery' },
-  ship: 'watercraft-kit/ship-cargo-a',
-  conveyor: 'factory-kit/conveyor-long',
-  st: {
-    saw: 'factory-kit/machine-bed', beamer: 'factory-kit/machine-window', press: 'factory-kit/machine', piston: 'factory-kit/piston-square',
-    lathe: 'factory-kit/machine-connection-hole', bench: 'furniture-kit/table', paper: 'factory-kit/hopper-high-square',
-    paperBody: 'factory-kit/machine', boxer: 'factory-kit/machine-window-bar', scanner: 'factory-kit/scanner-high',
+  // 'own/…' — свои модели из craft.js (строятся кодом, скачивать не надо)
+  items: {
+    log: 'own/log', board: 'own/board', beam: 'own/beam', panel: 'own/panel', legs: 'own/legs', sawdust: 'own/sawdust', cardboard: 'own/cardboard', bill: 'own/bill',
+    chair: 'furniture-kit/chairCushion', table: 'furniture-kit/table', wardrobe: 'furniture-kit/bookcaseClosedDoors', box: 'furniture-kit/cardboardBoxClosed',
   },
+  truck: { log: 'own/logTruck', opt: 'car-kit/delivery' },
+  ship: 'watercraft-kit/ship-cargo-a',
+  // станки: 'own/…' — свои, 'kenney' — прежняя сборка из деталей Factory Kit (KENNEY_ST)
+  st: { saw: 'own/saw', beamer: 'own/beamer', press: 'own/press', lathe: 'own/lathe', bench: 'own/bench', paper: 'own/paper', boxer: 'own/boxer', packer: 'own/packer' },
+  // постройки: 'own/…' — свои; касса 'kenney' — барная стойка, монитор и цветок (cashDesk, register, plant)
+  props: { stall: 'own/stall', rack: 'own/rack', tcrane: 'own/tcrane', pcrane: 'own/pcrane', compressor: 'own/compressor', trash: 'own/trash', tower: 'own/tower', desk: 'kenney' },
+  tower: 'own',   // этажи, леса и крыша небоскрёба: 'own' — свои (craft.js), иначе прежние из models.js
   cashDesk: 'furniture-kit/kitchenBar', register: 'furniture-kit/computerScreen', plant: 'furniture-kit/pottedPlant',
   logStack: 'nature-kit/log_stackLarge', fence: 'nature-kit/fence_simple', rock: 'nature-kit/rock_largeA', bush: 'nature-kit/plant_bushLarge',
   containers: ['watercraft-kit/cargo-container-a', 'watercraft-kit/cargo-container-b', 'watercraft-kit/cargo-container-c'],
@@ -33,14 +36,24 @@ const MODEL_OF = {
 };
 const CHAR_H = 1.65;   // рост человечка в метрах
 
+// Прежние станки из деталей Factory Kit: грузятся, только если какой-то станок в MODEL_OF.st стоит как 'kenney'
+const KENNEY_ST = {
+  conveyor: 'factory-kit/conveyor-long',
+  saw: 'factory-kit/machine-bed', beamer: 'factory-kit/machine-window', press: 'factory-kit/machine', piston: 'factory-kit/piston-square',
+  lathe: 'factory-kit/machine-connection-hole', bench: 'furniture-kit/table', paper: 'factory-kit/hopper-high-square',
+  paperBody: 'factory-kit/machine', boxer: 'factory-kit/machine-window-bar', scanner: 'factory-kit/scanner-high',
+};
+
+// какие файлы Kenney нужны игре (свои модели 'own/…' не грузятся)
 function neededModels() {
   const out = new Set();
   const walk = (v) => {
-    if (typeof v === 'string') { if (v.indexOf('/') > 0) out.add(v); }
+    if (typeof v === 'string') { if (v.indexOf('/') > 0 && !ownKey(v)) out.add(v); }
     else if (Array.isArray(v)) v.forEach(walk);
     else if (v && typeof v === 'object') Object.values(v).forEach(walk);
   };
   walk(MODEL_OF);
+  if (Object.values(MODEL_OF.st).some((k) => k === 'kenney')) walk(KENNEY_ST);
   return [...out];
 }
 
@@ -146,19 +159,23 @@ function concatGeos(list) {
   const geos = list.filter(Boolean).map((g) => (g.index ? g.toNonIndexed() : g));
   let n = 0;
   for (const g of geos) n += g.attributes.position.count;
+  const hasS = geos.some((g) => g.attributes.surf);   // поверхности своих моделей (look.js) — переносим
   const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  const srf = hasS ? new Float32Array(n) : null, rng = hasS ? new Float32Array(n * 2) : null;
   let o = 0;
   for (const g of geos) {
     const c = g.attributes.position.count;
     pos.set(g.attributes.position.array, o * 3);
     nor.set(g.attributes.normal.array, o * 3);
     if (g.attributes.color) col.set(g.attributes.color.array, o * 3); else col.fill(1, o * 3, (o + c) * 3);
+    if (hasS && g.attributes.surf) { srf.set(g.attributes.surf.array, o); rng.set(g.attributes.ring.array, o * 2); }
     o += c;
   }
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  if (hasS) { out.setAttribute('surf', new THREE.BufferAttribute(srf, 1)); out.setAttribute('ring', new THREE.BufferAttribute(rng, 2)); }
   out.computeBoundingBox();
   out.computeBoundingSphere();
   return out;
@@ -183,10 +200,14 @@ function applyKenneyItems() {
     ITEM_VIS[id].geo = geo;
     ITEM_VIS[id].h = (b.max.y - b.min.y) * 0.96;
   };
-  set('log', fittedGeo(I.log, { size: [1.3, null, null], longX: true }));
-  set('chair', fittedGeo(I.chair, { size: [0.5, 0.78, 0.5] }));
-  set('table', fittedGeo(I.table, { size: [0.95, 0.5, 0.65], longX: true }));
-  set('wardrobe', fittedGeo(I.wardrobe, { size: [0.7, 1.0, 0.45], longX: true }));
+  const kn = (key) => !!window.LIB_OK && !ownKey(key) && LIB.has(key);
+  // свои (own/…) — всегда, если не ?nomodels; Kenney — если загрузились
+  for (const id in I) { const k = ownKey(I[id]); if (k && window.OWN_OK !== false) set(id, ownItemGeo(k)); }
+  if (kn(I.log)) set('log', fittedGeo(I.log, { size: [1.3, null, null], longX: true }));
+  if (kn(I.chair)) set('chair', fittedGeo(I.chair, { size: [0.5, 0.78, 0.5] }));
+  if (kn(I.table)) set('table', fittedGeo(I.table, { size: [0.95, 0.5, 0.65], longX: true }));
+  if (kn(I.wardrobe)) set('wardrobe', fittedGeo(I.wardrobe, { size: [0.7, 1.0, 0.45], longX: true }));
+  if (!kn(I.box)) return;
   set('box', fittedGeo(I.box, { size: [0.5, 0.5, 0.5], uniform: false }));
   const boxed = (w, h, d, stripe) => concatGeos([
     fittedGeo(I.box, { size: [w, h, d], uniform: false }),
@@ -223,7 +244,7 @@ function addHelmet(root, color) {
   const hs = hb.getSize(new THREE.Vector3());
   const ws = head.getWorldScale(new THREE.Vector3());
   const r = (hs.x * 0.5 * 0.98) / ws.x;
-  const mat = new THREE.MeshLambertMaterial({ color });
+  const mat = plainMaterial({ color, roughness: 0.38 });   // пластиковая каска с бликом
   const helmet = new THREE.Group();
   const dome = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat);
   dome.scale.y = 0.72;
@@ -247,7 +268,7 @@ function makeCharacterK(style, seed) {
   root.traverse((o) => {
     if (!o.isMesh) return;
     const src = o.material;
-    o.material = new THREE.MeshLambertMaterial({ map: src.map || null, color: src.map ? 0xffffff : src.color });
+    o.material = plainMaterial({ map: src.map || null, color: src.map ? 0xffffff : src.color, roughness: 0.72 });
     o.castShadow = true;
     o.frustumCulled = false;
   });
@@ -288,14 +309,18 @@ function makeCharacterK(style, seed) {
 }
 
 // ───────── станки и постройки ─────────
-function buildStationK(type) {
-  const S = MODEL_OF.st;
+// id — какой именно станок (верстаки показывают, что на них собирают)
+function buildStationK(type, id) {
+  const key = MODEL_OF.st[type], own = ownKey(key);
+  if (own && OWN.st[own] && window.OWN_OK !== false) return OWN.st[own](id);
+  if (key !== 'kenney' || !window.LIB_OK) return buildStation(type);
+  const S = KENNEY_ST;
   const g = new THREE.Group();
   const add = (key, o, x = 0, y = 0, z = 0) => { const m = kMesh(key, o); if (m) { m.position.set(x, y, z); g.add(m); } return m; };
   // основание и рольганги к кучам входа и выхода
   g.add(meshOf([B(0x6b7178, 0, 0.06, 0, 3.2, 0.12, 2.4)]));
-  add(MODEL_OF.conveyor, { size: [1.25, 0.42, 0.85], uniform: false }, -2.25, 0, 0);
-  add(MODEL_OF.conveyor, { size: [1.25, 0.42, 0.85], uniform: false }, 2.25, 0, 0);
+  add(S.conveyor, { size: [1.25, 0.42, 0.85], uniform: false }, -2.25, 0, 0);
+  add(S.conveyor, { size: [1.25, 0.42, 0.85], uniform: false }, 2.25, 0, 0);
   let anim = () => {};
   const blade = (color) => {
     const m = meshOf([C(COL.steel, 0, 0, 0, 0.55, 0.04, Math.PI / 2, 0, 0, 'cyl20'), C(color, 0, 0, 0, 0.12, 0.08, Math.PI / 2)]);
@@ -356,7 +381,9 @@ function buildStationK(type) {
 }
 
 function buildPropK(type) {
-  if (type === 'desk') {
+  const own = ownKey(MODEL_OF.props[type]);
+  if (own && OWN.props[own] && window.OWN_OK !== false) return OWN.props[own]();
+  if (type === 'desk' && window.LIB_OK) {
     const g = new THREE.Group();
     const bar = kMesh(MODEL_OF.cashDesk, { size: [4, 1.15, 1.2], uniform: false, longX: true });
     if (!bar) return buildProp(type);
@@ -371,6 +398,9 @@ function buildPropK(type) {
 }
 
 function buildTruckK(kind) {
+  const own = ownKey(MODEL_OF.truck[kind]);
+  if (own && OWN.trucks[own] && window.OWN_OK !== false) return OWN.trucks[own]();
+  if (!window.LIB_OK) return buildTruck(kind);
   const g = new THREE.Group();
   // у машин Kenney длинная сторона — вдоль Z, кабина — к +Z; разворачиваем кабиной к +X
   const m = kMesh(MODEL_OF.truck[kind], { size: [6.2, null, null], rotY: Math.PI / 2, longX: true });
@@ -380,6 +410,7 @@ function buildTruckK(kind) {
 }
 
 function buildShipK() {
+  if (!window.LIB_OK) return buildShip();
   const g = new THREE.Group();
   const m = kMesh(MODEL_OF.ship, { size: [null, null, 18] });
   if (!m) return buildShip();

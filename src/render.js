@@ -4,6 +4,8 @@
 const VIEW_R = 70;          // дальше этого от игрока содержимое куч не рисуем
 const _mat = new THREE.Matrix4(), _quat = new THREE.Quaternion(), _pos = new THREE.Vector3(), _scl = new THREE.Vector3(1, 1, 1);
 const _yAxis = new THREE.Vector3(0, 1, 0);
+// полупрозрачные «призраки» того, что купится на площадке (общие на все площадки)
+const GHOST_MAT = {};
 
 // ───────── HTML-подписи над объектами ─────────
 class Labels {
@@ -95,7 +97,7 @@ function groundText(text, size, color) {
 }
 
 function flatRect(x0, z0, x1, z1, color, y = 0.01) {
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), new THREE.MeshLambertMaterial({ color }));
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), plainMaterial({ color, roughness: 0.95 }));
   m.rotation.x = -Math.PI / 2;
   m.position.set((x0 + x1) / 2, y, (z0 + z1) / 2);
   m.receiveShadow = true;
@@ -108,19 +110,21 @@ class View {
     this.canvas = canvas;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    lookRenderer(this.renderer);
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xbfe3f2);
-    this.scene.fog = new THREE.Fog(0xbfe3f2, 80, 170);
+    this.scene.background = new THREE.Color(LOOK.fog);
+    this.scene.fog = new THREE.Fog(LOOK.fog, 85, 175);
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.5, 400);
     this.zoom = 1.15;
     this.labels = new Labels(labelsRoot, this.camera);
     this.t = 0;
     initMaterials();
+    GHOST_MAT.st = plainMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, depthWrite: false });
+    GHOST_MAT.man = plainMaterial({ color: 0xffffff, transparent: true, opacity: 0.38, depthWrite: false });
     buildItemModels();
     this.K = !!window.LIB_OK;   // модели Kenney загрузились — ставим их, иначе наши из models.js
-    if (this.K) applyKenneyItems();
+    this.O = !!window.OWN_OK;   // свои модели из craft.js (выключаются только ?nomodels)
+    if (this.K || this.O) applyKenneyItems();
     this.setupLights();
     this.buildWorld();
     this.inst = {};
@@ -158,43 +162,75 @@ class View {
     this.labels.w = w; this.labels.h = h;
   }
 
+  // солнце с тенью + отражения неба (look.js)
   setupLights() {
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x88a860, 1.5));
-    const sun = new THREE.DirectionalLight(0xfff0d8, 2.3);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    const sc = sun.shadow.camera;
-    sc.left = -38; sc.right = 38; sc.top = 38; sc.bottom = -38; sc.near = 1; sc.far = 140;
-    sun.shadow.bias = -0.0004;
-    sun.shadow.normalBias = 0.03;
-    this.scene.add(sun, sun.target);
-    this.sun = sun;
+    lookEnvironment(this.renderer, this.scene);
+    this.sun = lookSun(this.scene);
+  }
+
+  // трава вокруг: большой лоскут, пятна крупнее плитки текстуры — чтобы не было видно повторов
+  grassField() {
+    const W = 380, D = 280, geo = new THREE.PlaneGeometry(W, D, 95, 70);
+    const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
+    const n1 = lkNoise2(5), n2 = lkNoise2(6), c = new THREE.Color(), a = new THREE.Color(0xc9dca6), b = new THREE.Color(0xfff1c4);
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i);
+      const t = n1(x / 26 + 50, y / 26 + 50), dry = Math.max(0, n2(x / 14 + 9, y / 14 + 9) - 0.6) * 2.4;
+      c.setRGB(1, 1, 1).lerp(a, 1 - t).lerp(b, dry * 0.7);
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const gt = groundTexture('grass'), tex = gt.tex.clone();
+    tex.needsUpdate = true;
+    tex.repeat.set(W / gt.m, D / gt.m);
+    const m = new THREE.Mesh(geo, plainMaterial({ map: tex, vertexColors: true, roughness: 1 }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(30, 0, 20);
+    m.receiveShadow = true;
+    return m;
   }
 
   // ───────── неизменный мир ─────────
   buildWorld() {
     const sc = this.scene;
-    const ground = flatRect(-160, -120, 220, 160, 0x8fcf6b, 0);
-    sc.add(ground);
-    const zoneCol = { z1: 0xeadbb8, z2: 0x79b957, z3: 0xded8cd, z4: 0xe8e0ee, z5: 0xe1dccf, z6: 0xd3d3d3 };
+    sc.add(this.grassField());
+    // покрытия зон: утоптанная земля с опилками, лесная почва, бетон цехов, плитка магазина, плиты порта
+    const zoneKind = { z1: 'dirt', z2: 'forest', z3: 'concrete', z4: 'tiles', z5: 'concrete', z6: 'port' };
+    const curb = new Kit(31);
     for (const z of ZONES) {
       const r = z.rect;
-      sc.add(flatRect(r.x0, r.z0, r.x1, r.z1, zoneCol[z.id], 0.012));
-      const txt = groundText(z.name.toUpperCase(), 2.2, 'rgba(0,0,0,0.13)');
+      sc.add(groundPatch(zoneKind[z.id], r.x0, r.z0, r.x1, r.z1, 0.012));
+      const txt = groundText(z.name.toUpperCase(), 2.2, 'rgba(0,0,0,0.16)');
       txt.position.set((r.x0 + r.x1) / 2, 0.02, r.z1 - 1.8);
       sc.add(txt);
+      // бетонный бортик по краю зоны
+      const cw = 0.22, ch = 0.1, cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2, w = r.x1 - r.x0, d = r.z1 - r.z0;
+      curb.box(0xc2bdb2, cx, ch / 2, r.z0, w + cw, ch, cw, { surf: SURF.concrete, b: 0.03 });
+      curb.box(0xc2bdb2, cx, ch / 2, r.z1, w + cw, ch, cw, { surf: SURF.concrete, b: 0.03 });
+      curb.box(0xc2bdb2, r.x0, ch / 2, cz, cw, ch, d - cw, { surf: SURF.concrete, b: 0.03 });
+      curb.box(0xc2bdb2, r.x1, ch / 2, cz, cw, ch, d - cw, { surf: SURF.concrete, b: 0.03 });
     }
-    sc.add(flatRect(-16, -40, 16, -8, 0xd9d0bf, 0.012));
-    // дороги
-    sc.add(flatRect(MAP.x0 - 30, -3, MAP.seaX, 3, 0x5f646b, 0.016));
-    sc.add(flatRect(-3, 3, 3, MAP.z1 + 10, 0x5f646b, 0.016));
+    sc.add(groundPatch('gravel', -16, -40, 16, -8, 0.012));
+    // дороги: асфальт, бордюр по краям
+    sc.add(groundPatch('asphalt', MAP.x0 - 30, -3, MAP.seaX, 3, 0.016));
+    sc.add(groundPatch('asphalt', -3, 3, 3, MAP.z1 + 10, 0.016));
+    for (const s of [-1, 1]) {
+      const x0 = MAP.x0 - 30, x1 = MAP.seaX;
+      if (s < 0) curb.box(0xd2cdc2, (x0 + x1) / 2, 0.07, -3.1, x1 - x0, 0.14, 0.2, { surf: SURF.concrete, b: 0.03 });
+      else {
+        curb.box(0xd2cdc2, (x0 - 3.2) / 2, 0.07, 3.1, -3.2 - x0, 0.14, 0.2, { surf: SURF.concrete, b: 0.03 });
+        curb.box(0xd2cdc2, (x1 + 3.2) / 2, 0.07, 3.1, x1 - 3.2, 0.14, 0.2, { surf: SURF.concrete, b: 0.03 });
+      }
+      curb.box(0xd2cdc2, s * 3.1, 0.07, (3.2 + MAP.z1 + 10) / 2, 0.2, 0.14, MAP.z1 + 10 - 3.2, { surf: SURF.concrete, b: 0.03 });
+    }
+    sc.add(curb.mesh({}, false));
     const dash = [];
-    for (let x = MAP.x0 - 28; x < MAP.seaX; x += 4) dash.push(B(0xf4f4f4, x, 0.02, 0, 2, 0.01, 0.18));
-    for (let z = 6; z < MAP.z1 + 8; z += 4) dash.push(B(0xf4f4f4, 0, 0.02, z, 0.18, 0.01, 2));
+    for (let x = MAP.x0 - 28; x < MAP.seaX; x += 4) dash.push(B(0xe9e6dc, x, 0.02, 0, 2, 0.01, 0.16));
+    for (let z = 6; z < MAP.z1 + 8; z += 4) dash.push(B(0xe9e6dc, 0, 0.02, z, 0.16, 0.01, 2));
     sc.add(meshOf(dash, true, false));
     // море и причал
-    const sea = flatRect(MAP.seaX, -140, 260, 190, 0x3f9fd6, 0.03);
-    sea.material = new THREE.MeshLambertMaterial({ color: 0x3f9fd6 });
+    const sea = flatRect(MAP.seaX, -140, 260, 190, 0x2f7fb0, 0.03);
+    sea.material = plainMaterial({ color: 0x2c78a8, roughness: 0.18, metalness: 0 });
     sc.add(sea);
     sc.add(flatRect(MAP.seaX - 3, -140, MAP.seaX, 190, 0xe8d7a8, 0.02));
     const pier = [B(0xa7794a, (PIER.x0 + PIER.x1) / 2, 0.2, (PIER.z0 + PIER.z1) / 2, PIER.x1 - PIER.x0, 0.2, PIER.z1 - PIER.z0)];
@@ -333,7 +369,7 @@ class View {
     for (const id in STATIONS) {
       const on = g.stationOn(id);
       if (on && !this.stObjs[id]) {
-        const st = STATIONS[id], o = this.K ? buildStationK(st.type) : buildStation(st.type);
+        const st = STATIONS[id], o = (this.K || this.O) ? buildStationK(st.type, id) : buildStation(st.type);
         o.g.position.set(st.x, 0, st.z);
         this.scene.add(o.g);
         this.stObjs[id] = o;
@@ -344,7 +380,7 @@ class View {
     PROPS.forEach((pr) => {
       const on = g.propOn(pr);
       if (on && !this.propObjs[pr.id]) {
-        const o = this.K ? buildPropK(pr.type) : buildProp(pr.type);
+        const o = (this.K || this.O) ? buildPropK(pr.type) : buildProp(pr.type);
         o.g.position.set(pr.x, 0, pr.z);
         this.scene.add(o.g);
         this.propObjs[pr.id] = o;
@@ -353,7 +389,7 @@ class View {
     });
     for (const id of ['trash1', 'trash3']) {
       if (g.pileSet.has(id) && !this.propObjs[id]) {
-        const o = buildProp('trash'), p = PILES[id];
+        const o = (this.K || this.O) ? buildPropK('trash') : buildProp('trash'), p = PILES[id];
         o.g.position.set(p.x, 0, p.z - 1.8);
         this.scene.add(o.g);
         this.propObjs[id] = o;
@@ -365,10 +401,11 @@ class View {
       const on = g.pileSet.has(id) && (!PILES[id].pickZone || g.open[PILES[id].pickZone]);
       if (on && !this.pileObjs[id]) {
         const p = PILES[id];
-        let color = '#2fa35a', fill = 'rgba(255,255,255,0.28)';
-        if (p.mode === 'drop') color = '#2f7fd0';
-        if (p.money) { color = '#e5a91c'; fill = 'rgba(255,230,120,0.35)'; }
-        if (p.site) { color = '#f08a24'; fill = 'rgba(255,200,120,0.35)'; }
+        // разметка на полу: взять — зелёная, положить — синяя, касса — жёлтая
+        let color = this.O ? '#46a060' : '#2fa35a', fill = this.O ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.28)';
+        if (p.mode === 'drop') color = this.O ? '#4a86c4' : '#2f7fd0';
+        if (p.money) { color = '#e5a91c'; fill = 'rgba(255,230,120,0.3)'; }
+        if (p.site) { color = '#f08a24'; fill = 'rgba(255,200,120,0.3)'; }
         if (p.trash) color = '#7f8c8d';
         if (p.dock) color = '#16a085';
         const m = new THREE.Mesh(new THREE.PlaneGeometry(p.w, p.d), new THREE.MeshBasicMaterial({ map: padTexture(p.w, p.d, color, fill, false), transparent: true, depthWrite: false }));
@@ -384,20 +421,23 @@ class View {
       if (vis && !this.padObjs[p.id]) {
         const grp = new THREE.Group();
         grp.position.set(p.x, 0, p.z);
-        const base = new THREE.Mesh(new THREE.PlaneGeometry(p.w, p.d), new THREE.MeshBasicMaterial({ map: padTexture(p.w, p.d, p.gate ? '#e0503c' : '#f5b400', 'rgba(255,255,255,0.8)', true), transparent: true, depthWrite: false }));
+        // площадка покупки: жёлтая рамка (участок — красная) по тёмной заливке, как разметка на полу цеха
+        const padFill = this.O ? 'rgba(24,26,28,0.42)' : 'rgba(255,255,255,0.8)';
+        const base = new THREE.Mesh(new THREE.PlaneGeometry(p.w, p.d), new THREE.MeshBasicMaterial({ map: padTexture(p.w, p.d, p.gate ? '#e0503c' : '#f2b31a', padFill, true), transparent: true, depthWrite: false, toneMapped: false }));
         base.rotation.x = -Math.PI / 2; base.position.y = 0.04;
         grp.add(base);
-        const fill = new THREE.Mesh(new THREE.PlaneGeometry(p.w - 0.3, p.d - 0.3), new THREE.MeshBasicMaterial({ color: 0x4caf50, transparent: true, opacity: 0.75, depthWrite: false }));
+        const fill = new THREE.Mesh(new THREE.PlaneGeometry(p.w - 0.3, p.d - 0.3), new THREE.MeshBasicMaterial({ color: this.O ? 0x49a25c : 0x4caf50, transparent: true, opacity: 0.72, depthWrite: false, toneMapped: false }));
         fill.rotation.x = -Math.PI / 2; fill.position.y = 0.05;
         grp.add(fill);
         // «призрак» того, что купится
         if (p.station) {
-          const ghost = (this.K ? buildStationK : buildStation)(STATIONS[p.station].type).g;
-          ghost.traverse((c) => { if (c.isMesh) { c.material = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.28, depthWrite: false }); c.castShadow = false; } });
+          const type = STATIONS[p.station].type;
+          const ghost = ((this.K || this.O) ? buildStationK(type, p.station) : buildStation(type)).g;
+          ghost.traverse((c) => { if (c.isMesh) { c.material = GHOST_MAT.st; c.castShadow = false; } });
           grp.add(ghost);
         } else if (p.worker) {
           const ch = ((this.K && makeCharacterK('worker', PADS.indexOf(p))) || buildCharacter('worker')).g;
-          ch.traverse((c) => { if (c.isMesh) { c.material = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false }); c.castShadow = false; } });
+          ch.traverse((c) => { if (c.isMesh) { c.material = GHOST_MAT.man; c.castShadow = false; } });
           grp.add(ch);
         }
         this.scene.add(grp);
@@ -499,6 +539,12 @@ class View {
     out.z = acz + (iz - (nz - 1) / 2) * (fd + gap);
     out.y = 0.04 + (p.y || 0) + layer * vis.h;
     out.ry = ry;
+    if (this.O) {   // живой штабель: каждый предмет чуть сдвинут и повёрнут (всегда одинаково для своего места)
+      const h = Math.sin((idx + 1) * 12.9898 + ti * 78.233 + p.x * 3.17 + p.z * 1.31) * 43758.5453, j = h - Math.floor(h);
+      out.x += (j - 0.5) * 0.045;
+      out.z += (((j * 7.31) % 1) - 0.5) * 0.045;
+      out.ry += (((j * 13.7) % 1) - 0.5) * 0.07;
+    }
     return true;
   }
 
@@ -664,7 +710,7 @@ class View {
     for (const tr of g.trucks) {
       tseen.add(tr);
       let o = this.truckObjs.get(tr);
-      if (!o) { o = this.K ? buildTruckK(tr.kind) : buildTruck(tr.kind); this.scene.add(o); this.truckObjs.set(tr, o); }
+      if (!o) { o = (this.K || this.O) ? buildTruckK(tr.kind) : buildTruck(tr.kind); this.scene.add(o); this.truckObjs.set(tr, o); }
       o.position.set(tr.x, 0, tr.z);
       o.rotation.y = tr.dir > 0 ? 0 : Math.PI;
       if (tr.kind === 'log' && near(tr.x, tr.z)) {
@@ -691,8 +737,7 @@ class View {
     const ct = this.camTarget, z = this.zoom;
     this.camera.position.set(ct.x, 19 * z, ct.z + 15 * z);
     this.camera.lookAt(ct.x, 0.6, ct.z + 0.5);
-    this.sun.position.set(ct.x - 18, 42, ct.z + 22);
-    this.sun.target.position.set(ct.x, 0, ct.z);
+    lookSunAt(this.sun, ct.x, ct.z);
     this.labels.end();
     this.renderer.render(this.scene, this.camera);
   }
@@ -763,22 +808,31 @@ class View {
     this.flights = keep;
   }
 
+  // геометрия i-го этажа: свои этажи чередуются (каждый 5-й — технический, ламели через этаж смещены)
+  floorGeo(i) {
+    const own = this.O && MODEL_OF.tower === 'own';
+    const v = own ? (i % 5 === 4 ? 1 : i % 2 ? 2 : 0) : 'old';
+    this.towerGeos = this.towerGeos || {};
+    return this.towerGeos[v] || (this.towerGeos[v] = own ? ownTowerFloorGeo(v) : towerFloorGeo());
+  }
+
   syncTower() {
     const g = this.g, s = g.s;
     if (!this.towerFloors) {
-      this.towerGeo = towerFloorGeo();
+      const own = this.O && MODEL_OF.tower === 'own';
       this.towerFloors = [];
-      this.scaffold = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(14.4, 3, 14.4, 4, 1, 4)), new THREE.LineBasicMaterial({ color: 0xf39c33 }));
+      this.scaffold = own ? ownScaffold() : new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(14.4, 3, 14.4, 4, 1, 4)), new THREE.LineBasicMaterial({ color: 0xf39c33 }));
       this.scene.add(this.scaffold);
-      this.partial = new THREE.Mesh(this.towerGeo, MAT.flat);
+      this.partial = new THREE.Mesh(this.floorGeo(s.floor), MAT.flat);
       this.partial.castShadow = true;
       this.scene.add(this.partial);
-      this.roof = meshOf([B(0x6b4a2b, 0, 0.15, 0, 14.6, 0.3, 14.6), B(COL.red, 5, 1.6, 5, 0.1, 3, 0.1), B(COL.red, 5.5, 2.8, 5, 1, 0.6, 0.04)]);
+      this.roof = own ? ownRoof() : meshOf([B(0x6b4a2b, 0, 0.15, 0, 14.6, 0.3, 14.6), B(COL.red, 5, 1.6, 5, 0.1, 3, 0.1), B(COL.red, 5.5, 2.8, 5, 1, 0.6, 0.04)]);
       this.scene.add(this.roof);
     }
     const n = s.floor, tw = PROPS.find((p) => p.id === 'tower');
+    if (this.partial.geometry !== this.floorGeo(n)) this.partial.geometry = this.floorGeo(n);
     while (this.towerFloors.length < n) {
-      const m = new THREE.Mesh(this.towerGeo, MAT.flat);
+      const m = new THREE.Mesh(this.floorGeo(this.towerFloors.length), MAT.flat);
       m.castShadow = true; m.receiveShadow = true;
       m.position.set(tw.x, 0.6 + this.towerFloors.length * 3, tw.z);
       this.scene.add(m);
@@ -802,9 +856,12 @@ class View {
     const cr = this.propObjs.tcrane;
     if (cr) {
       const h = top + 8;
-      cr.g.userData.mast.scale.y = h;
-      cr.g.userData.mast.position.y = 0;
-      cr.g.userData.top.position.y = h + 0.3;
+      if (cr.g.userData.setHeight) cr.g.userData.setHeight(h);   // свой кран: мачта собирается из секций
+      else {
+        cr.g.userData.mast.scale.y = h;
+        cr.g.userData.mast.position.y = 0;
+        cr.g.userData.top.position.y = h + 0.3;
+      }
     }
   }
 

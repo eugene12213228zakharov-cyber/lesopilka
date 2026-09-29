@@ -25,7 +25,9 @@ window.lesopilkaReplace = (data) => {
   // модели Kenney грузим до старта; если что-то не загрузилось — играем на своих моделях из models.js
   window.LIB = new ModelLib();
   window.LIB_OK = false;
-  if (new URLSearchParams(location.search).has('nomodels')) { /* ?nomodels — сравнить со старыми моделями */ }
+  // свои модели (craft.js) строятся кодом и загрузки не требуют; ?nomodels выключает и их, и Kenney
+  window.OWN_OK = !new URLSearchParams(location.search).has('nomodels');
+  if (!window.OWN_OK) { /* ?nomodels — сравнить со старыми моделями */ }
   else try {
     const keys = neededModels();
     const failed = await LIB.loadAll(keys, (d, n) => { const l = $('loading'); if (l) l.textContent = `🪵 Лесопилка загружается… модели ${d} из ${n}`; });

@@ -1,35 +1,35 @@
 'use strict';
-// Готовые модели Kenney (kenney.nl, лицензия CC0): кандидаты для витрины и что где стоит в игре.
+// Готовые модели Kenney (kenney.nl, лицензия CC0): кандидаты для витрины и загрузчик.
 // Файлы лежат в assets/kenney/<набор>/<модель>.glb (копирует tools/kenney-copy.js из _raw/).
 
 const KENNEY_DIR = 'assets/kenney/';
 
-// Витрина: группы кандидатов. star — что стоит в игре по умолчанию.
+// Витрина: группы кандидатов. Что из них стоит в игре (★ в витрине), берётся из MODEL_OF (kmodels.js).
 const KENNEY_GROUPS = [
-  { title: 'Люди', pack: 'mini-characters', star: ['character-male-e', 'character-male-a', 'character-male-b', 'character-male-f', 'character-female-b', 'character-female-c'],
+  { title: 'Люди', pack: 'mini-characters',
     items: ['character-male-a', 'character-male-b', 'character-male-c', 'character-male-d', 'character-male-e', 'character-male-f',
       'character-female-a', 'character-female-b', 'character-female-c', 'character-female-d', 'character-female-e', 'character-female-f'] },
-  { title: 'Деревья делянки', pack: 'nature-kit', star: ['tree_pineRoundA'],
+  { title: 'Деревья делянки', pack: 'nature-kit',
     items: ['tree_pineDefaultA', 'tree_pineDefaultB', 'tree_pineRoundA', 'tree_pineRoundC', 'tree_pineRoundE', 'tree_pineTallA_detailed',
       'tree_pineTallB_detailed', 'tree_pineSmallA', 'tree_cone', 'tree_default', 'tree_oak', 'tree_fat'] },
-  { title: 'Пни и брёвна', pack: 'nature-kit', star: ['stump_round', 'log', 'log_stackLarge'],
+  { title: 'Пни и брёвна', pack: 'nature-kit',
     items: ['stump_old', 'stump_oldTall', 'stump_round', 'stump_roundDetailed', 'stump_square', 'stump_squareDetailed', 'log', 'log_large', 'log_stack', 'log_stackLarge'] },
-  { title: 'Мебель-товар и коробки', pack: 'furniture-kit', star: ['chairCushion', 'table', 'bookcaseClosedDoors', 'cardboardBoxClosed'],
+  { title: 'Мебель-товар и коробки', pack: 'furniture-kit',
     items: ['chair', 'chairCushion', 'chairRounded', 'table', 'tableCloth', 'tableCross', 'bookcaseClosedDoors', 'bookcaseClosed', 'kitchenCabinet', 'cardboardBoxClosed', 'cardboardBoxOpen'] },
-  { title: 'Магазин', pack: 'furniture-kit', star: ['bookcaseOpen', 'kitchenBar', 'computerScreen', 'pottedPlant', 'trashcan'],
+  { title: 'Магазин', pack: 'furniture-kit',
     items: ['bookcaseOpen', 'bookcaseOpenLow', 'kitchenBar', 'computerScreen', 'pottedPlant', 'plantSmall1', 'lampSquareFloor', 'rugRectangle', 'trashcan', 'bench'] },
-  { title: 'Станки и цех', pack: 'factory-kit', star: ['machine-bed', 'machine-window', 'piston-square', 'machine-connection-hole', 'hopper-high-square', 'machine-window-bar', 'scanner-high', 'conveyor-long'],
+  { title: 'Станки и цех', pack: 'factory-kit',
     items: ['machine', 'machine-bed', 'machine-fortified', 'machine-window', 'machine-window-bar', 'machine-connection-hole', 'machine-connection-pipe',
       'hopper-high-square', 'hopper-square', 'piston-square', 'piston-round', 'robot-arm-a', 'robot-arm-b', 'scanner-high',
       'conveyor-long', 'conveyor-stripe', 'conveyor-bars-sides', 'crane', 'box-small', 'box-long', 'cog-a'] },
-  { title: 'Машины', pack: 'car-kit', star: ['delivery-flat', 'delivery'],
+  { title: 'Машины', pack: 'car-kit',
     items: ['delivery-flat', 'delivery', 'truck', 'truck-flat', 'garbage-truck', 'tractor', 'van'] },
-  { title: 'Порт', pack: 'watercraft-kit', star: ['ship-cargo-a', 'cargo-container-a', 'cargo-container-b'],
+  { title: 'Порт', pack: 'watercraft-kit',
     items: ['ship-cargo-a', 'ship-cargo-b', 'ship-cargo-c', 'boat-tug-a', 'cargo-container-a', 'cargo-container-b', 'cargo-container-c', 'cargo-pile-a'] },
-  { title: 'Здания вокруг', pack: 'city-kit-industrial', star: ['building-a', 'building-e', 'building-k', 'building-m', 'water-tower', 'chimney-large'],
+  { title: 'Здания вокруг', pack: 'city-kit-industrial',
     items: ['building-a', 'building-c', 'building-e', 'building-g', 'building-k', 'building-m', 'building-p', 'building-s', 'water-tower', 'windmill', 'chimney-large', 'detail-tank-large'] },
-  { title: 'Навесы', pack: 'city-kit-commercial', star: ['detail-awning'], items: ['detail-awning', 'detail-awning-wide'] },
-  { title: 'Заборы и мелочи', pack: 'nature-kit', star: ['fence_simple', 'rock_largeA', 'plant_bushLarge'],
+  { title: 'Навесы', pack: 'city-kit-commercial', items: ['detail-awning', 'detail-awning-wide'] },
+  { title: 'Заборы и мелочи', pack: 'nature-kit',
     items: ['fence_simple', 'fence_planks', 'fence_gate', 'sign', 'path_wood', 'rock_largeA', 'plant_bushLarge'] },
 ];
 

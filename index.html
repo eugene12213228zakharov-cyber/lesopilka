@@ -181,7 +181,7 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
 
 <script>
   // Номер сборки: меняется при каждом обновлении, чтобы браузер не смешал старые и новые файлы
-  window.LESO_BUILD = '2026.09.29-3';
+  window.LESO_BUILD = '2026.09.29-4';
   // Тестовая сборка: адрес …/lesopilka-test/ или локальный сервер — своё сохранение и админка F2
   window.LESO_TEST = /lesopilka-test/.test(location.pathname) || ['localhost', '127.0.0.1'].indexOf(location.hostname) >= 0;
   // если three.js не загрузился с CDN — скажем об этом, а не будем молча висеть
@@ -203,7 +203,7 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
   window.THREE = THREE;
   window.GLTFLoader = GLTFLoader;
   window.SkeletonUtils = SkeletonUtils;
-  const files = ['util', 'config', 'nav', 'sim', 'bot', 'models', 'assets', 'kmodels', 'render', 'ui', 'input', 'audio', 'admin', 'main'];
+  const files = ['util', 'config', 'nav', 'sim', 'bot', 'models', 'look', 'craft', 'assets', 'kmodels', 'render', 'ui', 'input', 'audio', 'admin', 'main'];
   const load = (f) => new Promise((res, rej) => {
     const s = document.createElement('script');
     s.src = 'src/' + f + '.js?v=' + window.LESO_BUILD;

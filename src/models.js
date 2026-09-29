@@ -5,9 +5,11 @@
 const MAT = {};
 const SHAPES = {};
 
+// материал с «поверхностями» (дерево, металл, бетон…) — look.js
 function initMaterials() {
-  MAT.vc = new THREE.MeshLambertMaterial({ vertexColors: true });
-  MAT.flat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  if (MAT.flat) return;
+  MAT.vc = surfMaterial(false);
+  MAT.flat = surfMaterial(true);
 }
 
 function shape(name) {
