@@ -21,7 +21,17 @@ window.lesopilkaReplace = (data) => {
   location.reload();
 };
 
-(function boot() {
+(async function boot() {
+  // модели Kenney грузим до старта; если что-то не загрузилось — играем на своих моделях из models.js
+  window.LIB = new ModelLib();
+  window.LIB_OK = false;
+  if (new URLSearchParams(location.search).has('nomodels')) { /* ?nomodels — сравнить со старыми моделями */ }
+  else try {
+    const keys = neededModels();
+    const failed = await LIB.loadAll(keys, (d, n) => { const l = $('loading'); if (l) l.textContent = `🪵 Лесопилка загружается… модели ${d} из ${n}`; });
+    window.LIB_OK = failed.length === 0;
+    if (failed.length) console.warn('Не загрузились модели, беру свои:', failed.join(', '));
+  } catch (e) { console.warn('Модели не загрузились, беру свои:', e); }
   const save = readSave();
   const game = new Game(save);
   const sfx = new Sfx();

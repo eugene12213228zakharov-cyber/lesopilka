@@ -119,6 +119,8 @@ class View {
     this.t = 0;
     initMaterials();
     buildItemModels();
+    this.K = !!window.LIB_OK;   // модели Kenney загрузились — ставим их, иначе наши из models.js
+    if (this.K) applyKenneyItems();
     this.setupLights();
     this.buildWorld();
     this.inst = {};
@@ -209,12 +211,87 @@ class View {
       if (inside) continue;
       spots.push([x, z, 0.7 + rngNext(rs) * 0.7]);
     }
-    // лесок вдоль края между зонами (не мешает ходить: за пределами карты по Z)
+    if (this.K) { this.buildDecorK(spots); return; }
+    // лесок вокруг карты (за её пределами — ходить не мешает)
     const trees = new THREE.InstancedMesh(tg, MAT.flat, spots.length);
     spots.forEach(([x, z, s], i) => { _mat.compose(_pos.set(x, 0, z), _quat.identity(), _scl.set(s, s, s)); trees.setMatrixAt(i, _mat); });
     trees.castShadow = true; trees.receiveShadow = true;
     sc.add(trees);
     _scl.set(1, 1, 1);
+  }
+
+  // одна модель Kenney много раз: места [x, z, поворот, масштаб]
+  instK(key, fit, places, shadow = true) {
+    const geo = fittedGeo(key, fit);
+    if (!geo || !places.length) return null;
+    const m = new THREE.InstancedMesh(geo, MAT.flat, places.length);
+    places.forEach(([x, z, ry, s], i) => {
+      _quat.setFromAxisAngle(_yAxis, ry || 0);
+      _mat.compose(_pos.set(x, 0, z), _quat, _scl.set(s || 1, s || 1, s || 1));
+      m.setMatrixAt(i, _mat);
+    });
+    _scl.set(1, 1, 1);
+    m.castShadow = shadow; m.receiveShadow = true;
+    this.scene.add(m);
+    return m;
+  }
+
+  // декор из моделей Kenney: деревья вокруг карты, заводские корпуса по краям, штабеля, контейнеры, камни
+  buildDecorK(spots) {
+    const rs = { s: 4242 };
+    const r = () => rngNext(rs);
+    const types = MODEL_OF.decorTrees;
+    const byType = types.map(() => []);
+    for (const [x, z, s] of spots) byType[Math.floor(r() * types.length)].push([x, z, r() * Math.PI * 2, s]);
+    types.forEach((k, i) => this.instK(k, { size: [null, 4.6, null] }, byType[i]));
+    // заводские корпуса за краями карты
+    const bl = MODEL_OF.buildings;
+    const south = [-66, -40, -14, 16, 44, 70].map((x, i) => [x, 92, Math.PI, 1, bl[i % bl.length]]);
+    const west = [-26, 2, 30, 58].map((z, i) => [-104, z, Math.PI / 2, 1, bl[(i + 2) % bl.length]]);
+    const north = [-58, -34, 34, 58].map((x, i) => [x, -58, 0, 1, bl[(i + 4) % bl.length]]);
+    for (const [x, z, ry, s, key] of south.concat(west, north)) {
+      const m = kMesh(key, { size: [15, null, null], longX: true });
+      if (m) { m.position.set(x, 0, z); m.rotation.y = ry; this.scene.add(m); }
+    }
+    const tall = MODEL_OF.tallDecor;
+    const wt = kMesh(tall[0], { size: [null, 14, null] });
+    if (wt) { wt.position.set(-96, 0, -36); this.scene.add(wt); }
+    const ch = kMesh(tall[1], { size: [null, 16, null] });
+    if (ch) { ch.position.set(84, 0, 96); this.scene.add(ch); }
+    // штабеля брёвен у склада и на делянке, контейнеры в порту
+    this.instK(MODEL_OF.logStack, { size: [3.2, null, null], longX: true }, [[-44.6, 6.8, Math.PI / 2], [-44.6, 15.5, Math.PI / 2], [-51.8, 44.5, 0]]);
+    // контейнеры — южнее порта, в стороне от площадок
+    MODEL_OF.containers.forEach((k, i) => this.instK(k, { size: [6, null, null], longX: true }, [[60 + (i % 2) * 7, 54 + i * 3.4, 0]]));
+    // камни и кусты на траве — вне зон, дорог и площадок
+    const free = (x, z) => {
+      if (Math.abs(z) < 5 || (Math.abs(x) < 5 && z > 0)) return false;
+      if (x > MAP.seaX - 4) return false;
+      if (x > -18 && x < 18 && z > -42 && z < -6) return false;
+      for (const zz of ZONES) { const q = zz.rect; if (x > q.x0 - 3 && x < q.x1 + 3 && z > q.z0 - 3 && z < q.z1 + 3) return false; }
+      for (const p of PADS) if (p.gate && dist(x, z, p.x, p.z) < 5) return false;
+      return x > MAP.x0 + 2 && x < MAP.x1 && z > MAP.z0 + 2 && z < MAP.z1 - 2;
+    };
+    const rocks = [], bushes = [];
+    for (let i = 0; i < 700 && rocks.length + bushes.length < 70; i++) {
+      const x = MAP.x0 + r() * (MAP.x1 - MAP.x0), z = MAP.z0 + r() * (MAP.z1 - MAP.z0);
+      if (!free(x, z)) continue;
+      (r() < 0.4 ? rocks : bushes).push([x, z, r() * Math.PI * 2, 0.6 + r() * 0.7]);
+    }
+    this.instK(MODEL_OF.rock, { size: [2.2, null, null] }, rocks);
+    this.instK(MODEL_OF.bush, { size: [1.6, null, null] }, bushes);
+  }
+
+  // забор закрытой зоны из секций забора Kenney
+  fenceK(r) {
+    const seg = fittedGeo(MODEL_OF.fence, { size: [2, null, null], longX: true });
+    if (!seg) return null;
+    const list = [];
+    const put = (x, z, ry) => { const g = seg.clone(); g.rotateY(ry); g.translate(x, 0, z); list.push(g); };
+    for (let x = r.x0 + 1; x < r.x1; x += 2) { put(x, r.z0, 0); put(x, r.z1, 0); }
+    for (let z = r.z0 + 1; z < r.z1; z += 2) { put(r.x0, z, Math.PI / 2); put(r.x1, z, Math.PI / 2); }
+    const m = new THREE.Mesh(concatGeos(list), MAT.flat);
+    m.castShadow = true; m.receiveShadow = true;
+    return m;
   }
 
   buildGoalMarkers() {
@@ -234,7 +311,7 @@ class View {
     let o = this.agentObjs.get(a);
     if (!o) {
       const style = a.kind === 'player' ? 'player' : a.kind === 'worker' ? 'worker' : 'cust';
-      o = buildCharacter(style, a.look || 0);
+      o = (this.K && makeCharacterK(style, style === 'player' ? 0 : (a.look || 0))) || buildCharacter(style, a.look || 0);
       o.phase = 0;
       o.g.position.set(a.x, 0, a.z);
       o.g.rotation.y = a.face || 0;
@@ -256,7 +333,7 @@ class View {
     for (const id in STATIONS) {
       const on = g.stationOn(id);
       if (on && !this.stObjs[id]) {
-        const st = STATIONS[id], o = buildStation(st.type);
+        const st = STATIONS[id], o = this.K ? buildStationK(st.type) : buildStation(st.type);
         o.g.position.set(st.x, 0, st.z);
         this.scene.add(o.g);
         this.stObjs[id] = o;
@@ -267,7 +344,7 @@ class View {
     PROPS.forEach((pr) => {
       const on = g.propOn(pr);
       if (on && !this.propObjs[pr.id]) {
-        const o = buildProp(pr.type);
+        const o = this.K ? buildPropK(pr.type) : buildProp(pr.type);
         o.g.position.set(pr.x, 0, pr.z);
         this.scene.add(o.g);
         this.propObjs[pr.id] = o;
@@ -315,11 +392,11 @@ class View {
         grp.add(fill);
         // «призрак» того, что купится
         if (p.station) {
-          const ghost = buildStation(STATIONS[p.station].type).g;
+          const ghost = (this.K ? buildStationK : buildStation)(STATIONS[p.station].type).g;
           ghost.traverse((c) => { if (c.isMesh) { c.material = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.28, depthWrite: false }); c.castShadow = false; } });
           grp.add(ghost);
         } else if (p.worker) {
-          const ch = buildCharacter('worker').g;
+          const ch = ((this.K && makeCharacterK('worker', PADS.indexOf(p))) || buildCharacter('worker')).g;
           ch.traverse((c) => { if (c.isMesh) { c.material = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false }); c.castShadow = false; } });
           grp.add(ch);
         }
@@ -342,7 +419,7 @@ class View {
           parts.push(B(COL.red, r.x0, y, (r.z0 + r.z1) / 2, 0.08, 0.12, d), B(COL.red, r.x1, y, (r.z0 + r.z1) / 2, 0.08, 0.12, d));
         }
         const grp = new THREE.Group();
-        grp.add(meshOf(parts, true, true));
+        grp.add((this.K && this.fenceK(r)) || meshOf(parts, true, true));
         const shade = flatRect(r.x0, r.z0, r.x1, r.z1, 0x000000, 0.025);
         shade.material = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.12, depthWrite: false });
         grp.add(shade);
@@ -356,8 +433,8 @@ class View {
     // делянка
     if (!this.plotObjs.length) {
       const soil = mergeParts([C(0x6b4a2b, 0, 0.02, 0, 1.0, 0.04, 0, 0, 0, 'cyl20')]);
-      const tree = mergeParts(treeParts(1));
-      const stump = mergeParts([C(0x8b5a2b, 0, 0.15, 0, 0.2, 0.3), C(0xd9a86c, 0, 0.301, 0, 0.18, 0.004)]);
+      const tree = (this.K && fittedGeo(MODEL_OF.tree, { size: [null, 3.9, null] })) || mergeParts(treeParts(1));
+      const stump = (this.K && fittedGeo(MODEL_OF.stump, { size: [0.75, null, null] })) || mergeParts([C(0x8b5a2b, 0, 0.15, 0, 0.2, 0.3), C(0xd9a86c, 0, 0.301, 0, 0.18, 0.004)]);
       for (let i = 0; i < PLOTS.length; i++) {
         const q = PLOTS[i], grp = new THREE.Group();
         grp.position.set(q.x, 0, q.z);
@@ -429,11 +506,12 @@ class View {
   stackBase(a) {
     const o = this.agentObjs.get(a);
     const x = o ? o.g.position.x : a.x, z = o ? o.g.position.z : a.z, f = o ? o.g.rotation.y : a.face;
-    return { x: x + Math.sin(f) * 0.5, z: z + Math.cos(f) * 0.5, f };
+    const fwd = o && o.stackFwd ? o.stackFwd : 0.5;
+    return { x: x + Math.sin(f) * fwd, z: z + Math.cos(f) * fwd, f, y: o && o.stackY ? o.stackY : 1.02 };
   }
   stackSlot(a, idx, out) {
     const b = this.stackBase(a);
-    let y = 1.02;
+    let y = b.y;
     const st = a.stack;
     for (let i = 0; i < idx && i < st.length; i++) y += ITEM_VIS[st[i]].h * 0.92;
     out.x = b.x; out.z = b.z; out.y = y; out.ry = b.f;
@@ -586,7 +664,7 @@ class View {
     for (const tr of g.trucks) {
       tseen.add(tr);
       let o = this.truckObjs.get(tr);
-      if (!o) { o = buildTruck(tr.kind); this.scene.add(o); this.truckObjs.set(tr, o); }
+      if (!o) { o = this.K ? buildTruckK(tr.kind) : buildTruck(tr.kind); this.scene.add(o); this.truckObjs.set(tr, o); }
       o.position.set(tr.x, 0, tr.z);
       o.rotation.y = tr.dir > 0 ? 0 : Math.PI;
       if (tr.kind === 'log' && near(tr.x, tr.z)) {
@@ -630,23 +708,32 @@ class View {
     while (d < -Math.PI) d += Math.PI * 2;
     o.g.rotation.y += d * (1 - Math.exp(-14 * dt));
     const moving = a.moving;
-    o.phase += dt * (moving ? 11 : 0);
-    const sw = moving ? Math.sin(o.phase) * 0.65 : 0;
-    o.legL.rotation.x += (sw - o.legL.rotation.x) * 0.4;
-    o.legR.rotation.x += (-sw - o.legR.rotation.x) * 0.4;
     const carry = a.stack.length > 0;
-    const armT = carry ? -1.35 : -sw * 0.8;
-    o.armL.rotation.x += (armT - o.armL.rotation.x) * 0.35;
-    o.armR.rotation.x += ((carry ? -1.35 : sw * 0.8) - o.armR.rotation.x) * 0.35;
-    o.body.position.y = moving ? Math.abs(Math.sin(o.phase)) * 0.05 : 0;
-    // стопка в руках
-    if (!carry) return;
     const far = Math.abs(a.x - this.g.pl.x) > VIEW_R || Math.abs(a.z - this.g.pl.z) > VIEW_R;
-    if (far) return;
+    let bob = 0;
+    if (o.model) {
+      // человечек Kenney: анимации «стоит / идёт / бежит» + руки «несу стопку»
+      if (!far || o.g.visible) {
+        const g = this.g, sp = a.kind === 'player' ? g.uv('u_speed') : a.kind === 'worker' ? g.uv('u_wSpeed') : TUNE.custSpeed;
+        o.set(moving, sp, carry, dt);
+      }
+    } else {
+      o.phase += dt * (moving ? 11 : 0);
+      const sw = moving ? Math.sin(o.phase) * 0.65 : 0;
+      o.legL.rotation.x += (sw - o.legL.rotation.x) * 0.4;
+      o.legR.rotation.x += (-sw - o.legR.rotation.x) * 0.4;
+      const armT = carry ? -1.35 : -sw * 0.8;
+      o.armL.rotation.x += (armT - o.armL.rotation.x) * 0.35;
+      o.armR.rotation.x += ((carry ? -1.35 : sw * 0.8) - o.armR.rotation.x) * 0.35;
+      o.body.position.y = moving ? Math.abs(Math.sin(o.phase)) * 0.05 : 0;
+      bob = o.body.position.y;
+    }
+    // стопка в руках
+    if (!carry || far) return;
     const hide = this.inflight.get('a' + this.agentId(a)) || 0;
     const n = Math.min(a.stack.length - hide, 42);
     const b = this.stackBase(a);
-    let y = 1.02 + o.body.position.y;
+    let y = b.y + bob;
     const wob = moving ? 1 : 0.25;
     for (let i = 0; i < n; i++) {
       const it = a.stack[i];
@@ -724,7 +811,7 @@ class View {
   syncShip() {
     const s = this.g.s.ship;
     if (!s || s.state === 'away') { if (this.shipObj) this.shipObj.visible = false; this.shipX = null; return; }
-    if (!this.shipObj) { this.shipObj = buildShip(); this.scene.add(this.shipObj); }
+    if (!this.shipObj) { this.shipObj = this.K ? buildShipK() : buildShip(); this.scene.add(this.shipObj); }
     let x = SHIP_DOCK[0];
     if (s.state === 'in') x = SHIP_DOCK[0] + (s.t / TUNE.shipSail) * 45;
     if (s.state === 'out') x = SHIP_DOCK[0] + (1 - s.t / TUNE.shipSail) * 45;
@@ -732,9 +819,9 @@ class View {
     this.shipObj.position.set(x, 0, SHIP_DOCK[1]);
     this.shipObj.rotation.y = 0;
     this.shipX = x;
-    // груз на палубе
+    // груз на палубе (у корабля Kenney палуба занята своими контейнерами — не рисуем)
     let i = 0;
-    if (s.got) for (const it in s.got) for (let k = 0; k < Math.min(s.got[it], 30); k++, i++) {
+    if (s.got && !this.K) for (const it in s.got) for (let k = 0; k < Math.min(s.got[it], 30); k++, i++) {
       const col = i % 4, row = Math.floor(i / 4) % 10, layer = Math.floor(i / 40);
       this.addInst(it, x - 1.6 + col * 1.05, 2.1 + layer * ITEM_VIS[it].h, SHIP_DOCK[1] - 3.5 + row * 1.0, 0);
     }

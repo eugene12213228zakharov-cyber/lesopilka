@@ -33,6 +33,20 @@ const KENNEY_GROUPS = [
     items: ['fence_simple', 'fence_planks', 'fence_gate', 'sign', 'path_wood', 'rock_largeA', 'plant_bushLarge'] },
 ];
 
+// Старые наборы Kenney (природа, мебель) раскрашены очень светло — под нашим солнцем выгорают.
+// Перекрашиваем по имени материала в насыщенные тона (и в игре, и в витрине).
+const RECOLOR = {
+  'nature-kit': {
+    leafsDark: 0x2f7d3a, leafsGreen: 0x4f9e3f, leafs: 0x5aae4a, grass: 0x5fae4a, plant: 0x3f9a55,
+    woodBarkDark: 0x6b4428, woodBark: 0x8b5a2b, woodInner: 0xe8c690, woodDark: 0x8a5a33, wood: 0xa9743f,
+    dirt: 0x8b6a4a, stone: 0x9aa3a8, stoneDark: 0x6f787d,
+  },
+  'furniture-kit': {
+    wood: 0xd39a5c, woodDark: 0xa86b3c, carpet: 0xd9534f, metal: 0xb8c4c8, metalDark: 0x5c6b73,
+    plant: 0x3f9a55, carpetBlue: 0x3d7fd0, carpetWhite: 0xf1efe8,
+  },
+};
+
 // Путь к файлу модели 'набор/модель'
 function kenneyUrl(key) { return KENNEY_DIR + key + '.glb?v=' + (typeof window !== 'undefined' ? window.LESO_BUILD : ''); }
 
@@ -68,6 +82,25 @@ class ModelLib {
     let skinned = false;
     g.scene.traverse((o) => { if (o.isSkinnedMesh) skinned = true; });
     return skinned ? SkeletonUtils.clone(g.scene) : g.scene.clone(true);
+  }
+
+  // клон с перекраской по RECOLOR — для витрины (в игре перекраска идёт при запекании)
+  cloneRecolored(key) {
+    const root = this.clone(key);
+    const pal = root && RECOLOR[key.split('/')[0]];
+    if (!pal) return root;
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      const one = !Array.isArray(o.material);
+      const mats = (one ? [o.material] : o.material).map((m) => {
+        if (pal[m.name] === undefined) return m;
+        const n = m.clone();
+        n.color.set(pal[m.name]);
+        return n;
+      });
+      o.material = one ? mats[0] : mats;
+    });
+    return root;
   }
 
   clips(key) { return this.gltf[key] ? this.gltf[key].animations : []; }

@@ -81,7 +81,7 @@
   let maxX = 0;
   for (const g of KENNEY_GROUPS) {
     // общий масштаб на группу: самая большая модель группы вписывается в FIT — пропорции внутри группы сохраняются
-    const objs = g.items.map((n) => ({ n, key: g.pack + '/' + n, obj: lib.clone(g.pack + '/' + n) })).filter((o) => o.obj);
+    const objs = g.items.map((n) => ({ n, key: g.pack + '/' + n, obj: lib.cloneRecolored(g.pack + '/' + n) })).filter((o) => o.obj);
     let big = 0;
     for (const o of objs) { const s = size(o.obj); big = Math.max(big, s.x, s.z, s.y * 0.8); }
     const k = big > 0 ? FIT / big : 1;
