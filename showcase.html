@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Лесопилка — витрина моделей</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
+<style>
+:root { --bg: #bfe3f2; --card: #ffffff; --ink: #23303b; --muted: #6b7885; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --card: #1f2830; --ink: #e8eef3; --muted: #9aa8b4; } }
+:root[data-theme="dark"] { --card: #1f2830; --ink: #e8eef3; --muted: #9aa8b4; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); font-family: Nunito, 'Segoe UI', sans-serif; color: var(--ink); }
+#c { position: fixed; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+#labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.lbl { position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform; }
+.lbl.name { background: rgba(255,255,255,0.88); color: #23303b; font-size: 11px; font-weight: 800; border-radius: 6px; padding: 1px 6px; }
+.lbl.name.star { background: #ffd43b; color: #3a2a00; }
+.lbl.group { background: rgba(35,48,59,0.88); color: #fff; font-size: 15px; font-weight: 900; border-radius: 8px; padding: 4px 10px; transform-origin: left; }
+#info { position: fixed; left: 16px; top: 14px; max-width: min(520px, calc(100vw - 32px)); background: var(--card); color: var(--ink); border-radius: 14px; padding: 10px 14px; box-shadow: 0 6px 18px rgba(20,40,60,0.18); font-size: 13px; line-height: 1.45; }
+#info b { font-weight: 900; }
+#status { color: var(--muted); font-weight: 800; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="labels"></div>
+<div id="info"><b>Витрина моделей Kenney</b> (бесплатные, CC0). <b>★ и жёлтый круг</b> — что стоит в игре по умолчанию.<br>
+Тяни мышью — двигать, колёсико — приблизить, WASD — тоже двигать. Напиши, что поменять: «группа — модель».<br><span id="status">Загрузка…</span></div>
+<script>window.LESO_BUILD = 'showcase-1';</script>
+<script type="importmap">
+  { "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  } }
+</script>
+<script type="module">
+  import * as THREE from 'three';
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+  import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+  window.THREE = THREE; window.GLTFLoader = GLTFLoader; window.SkeletonUtils = SkeletonUtils;
+  for (const f of ['util', 'assets', 'showcase']) {
+    await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'src/' + f + '.js?v=' + window.LESO_BUILD; s.onload = res; s.onerror = rej; document.body.appendChild(s); });
+  }
+</script>
+</body>
+</html>
