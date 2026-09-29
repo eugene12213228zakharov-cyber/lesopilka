@@ -22,9 +22,34 @@ let lastFloor = 0, nextReport = 1800, lastBuys = 0, lastBuyT = 0, maxGap = 0, ga
 const gaps = [];
 const floorRows = [];
 
+// «Дорого ли»: сколько секунд текущего дохода стоит покупка (доход — за последние 2 минуты)
+const incomeLog = [];
+const buys = [];
+const rate = () => {
+  const now = g.s.playT;
+  while (incomeLog.length > 1 && now - incomeLog[0][0] > 120) incomeLog.shift();
+  if (!incomeLog.length) return 0;
+  const [t0, s0] = incomeLog[0];
+  return (g.s.stats.sold - s0) / Math.max(30, now - t0);
+};
+const origBuy = g.buyUpgrade.bind(g), origPad = g.completePad.bind(g);
+g.buyUpgrade = (id) => {
+  const u = UPG_BY_ID[id], c = u.cost(g.s.upg[id] || 0), r = rate();
+  const ok = origBuy(id);
+  if (ok) buys.push({ t: g.s.playT, what: id, cost: c, pay: r > 0 ? c / r : 999 });
+  return ok;
+};
+g.completePad = (p) => {
+  const r = rate();
+  if (!g.s.padDone[p.id]) buys.push({ t: g.s.playT, what: p.id, cost: p.cost, pay: r > 0 ? p.cost / r : 999 });
+  return origPad(p);
+};
+let nextIncomeSample = 0;
+
 while (g.s.playT < hours * 3600 && g.s.floor < FLOORS.length) {
   bot.step(DT);
   g.step(DT);
+  if (g.s.playT >= nextIncomeSample) { nextIncomeSample += 5; incomeLog.push([g.s.playT, g.s.stats.sold]); }
   if (g.s.stats.buys !== lastBuys) {
     const gap = g.s.playT - lastBuyT;
     gaps.push(gap);
@@ -58,6 +83,15 @@ console.log('\n══════ итог ══════');
 console.log(`этажей ${g.s.floor}/${FLOORS.length}, активной игры ${fmtTime(g.s.playT)}${lunch ? ', офлайна ' + fmtTime(offline) : ''}`);
 console.log(`покупок ${g.s.stats.buys}; пауза между покупками: медиана ${fmtTime(med(gaps))}, самая длинная ${fmtTime(maxGap)} (с ${fmtTime(gapAt)})`);
 console.log('зоны: ' + ZONES.slice(1).map((z) => z.name + ' ' + (g.s.stats.zonesT[z.id] !== undefined ? fmtTime(g.s.stats.zonesT[z.id]) : '—')).join(' | '));
+// цена покупки в секундах дохода по отрезкам игры: медиана и доля «дорогих» (дольше 3 минут)
+const phases = [[0, 1800, '0–30 мин'], [1800, 3600, '30–60 мин'], [3600, 7200, '1–2 ч'], [7200, 14400, '2–4 ч'], [14400, 1e9, '4 ч+']];
+console.log('цена покупки в секундах дохода: ' + phases.map(([a, b, name]) => {
+  const ps = buys.filter((x) => x.t >= a && x.t < b).map((x) => x.pay);
+  if (!ps.length) return name + ' —';
+  const exp = ps.filter((p) => p > 180).length / ps.length;
+  return `${name}: медиана ${Math.round(med(ps))} с, дорогих ${Math.round(exp * 100)}%`;
+}).join(' | '));
+if (args.includes('--buys')) for (const x of buys) console.log(`  ${fmtTime(x.t).padStart(12)}  ${x.what.padEnd(14)} ${fmtMoney(x.cost).padStart(8)}  = ${Math.round(x.pay)} с дохода`);
 const notMax = UPGRADES.filter((u) => g.open[u.zone] && (g.s.upg[u.id] || 0) < u.max).map((u) => u.id + ' ' + (g.s.upg[u.id] || 0) + '/' + u.max);
 console.log('не докачано: ' + (notMax.join(', ') || 'всё'));
 const padsLeft = PADS.filter((p) => g.open[p.zone] && !g.s.padDone[p.id]).map((p) => p.id);

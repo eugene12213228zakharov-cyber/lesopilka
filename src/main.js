@@ -1,7 +1,9 @@
 'use strict';
 // Запуск: сохранение, офлайн-доход, игровой цикл.
 
-const SAVE_KEY = 'lesopilka_save_v1';
+// Тестовая сборка — по адресу (…/lesopilka-test/ или localhost): своё сохранение и админ-панель F2
+const TEST_MODE = !!window.LESO_TEST;
+const SAVE_KEY = TEST_MODE ? 'lesopilka_test_save_v1' : 'lesopilka_save_v1';
 const STEP = 1 / 60;
 
 function readSave() {
@@ -30,24 +32,33 @@ window.lesopilkaReplace = (data) => {
   window.__view = view;
   window.__input = input;
   $('loading').remove();
+  if (TEST_MODE) document.title = 'Лесопилка — ТЕСТ';
   // отладка: ?bot=1 — играет бот, ?speed=8 — ускорение времени
   const qs = new URLSearchParams(location.search);
   const bot = qs.get('bot') ? new Bot(game) : null;
-  const speed = clamp(+qs.get('speed') || 1, 1, 50);
+  let speed = clamp(+qs.get('speed') || 1, 1, 50);
   if (bot || speed > 1) window.__noSave = true;
 
   // перемотка времени, пока игры не было на экране
-  const catchUp = (sec) => {
+  const catchUp = (sec, force) => {
     if (sec < 30) return;
     const floor0 = game.s.floor;
     const r = game.fastForward(Math.min(sec, TUNE.offlineCap));
     r.capped = sec > TUNE.offlineCap;
     r.floors = game.s.floor - floor0;
     game.events.length = 0;
-    if (r.money >= 1 || r.floors > 0) ui.showOffline(r);
+    if (force || r.money >= 1 || r.floors > 0) ui.showOffline(r);
   };
   if (save && save.savedAt) catchUp((Date.now() - save.savedAt) / 1000);
   else if (!save && !bot) ui.showWelcome();
+
+  if (TEST_MODE) {
+    window.__admin = new Admin(game, view, ui, {
+      getSpeed: () => speed,
+      setSpeed: (v) => { speed = clamp(v, 1, 50); },
+      catchUp,
+    });
+  }
 
   let last = performance.now(), acc = 0, saveT = 0, hiddenAt = 0;
   const loop = (now) => {

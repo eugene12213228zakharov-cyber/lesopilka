@@ -107,6 +107,21 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
 .wide { display: block; width: 100%; margin: 8px 0; border: 0; border-radius: 12px; padding: 10px; font-weight: 800; background: var(--line); color: var(--ink); }
 .danger { background: #fbe9e7 !important; color: var(--bad) !important; }
 
+/* админка тестовой версии */
+#adminBtn { position: absolute; left: 16px; top: 146px; background: #d64533; color: #fff; border: 0; border-radius: 10px; padding: 5px 10px; font-weight: 900; font-size: 12px; box-shadow: var(--shadow); }
+#admin { position: fixed; left: 16px; top: 184px; width: 300px; max-height: calc(100vh - 200px); overflow-y: auto; background: rgba(24,30,36,0.94); color: #eef3f7; border-radius: 14px; padding: 10px 12px 12px; box-shadow: var(--shadow); font-size: 13px; }
+#admin.hidden { display: none; }
+#admin .ah { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+#admin .ah button { background: transparent; border: 0; color: #9aa8b4; font-size: 16px; }
+#admin .as { color: #9aa8b4; font-weight: 800; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin: 10px 0 5px; }
+#admin .ag { display: flex; flex-wrap: wrap; gap: 5px; }
+#admin .ag button { background: #33414d; color: #eef3f7; border: 0; border-radius: 8px; padding: 6px 8px; font-weight: 800; font-size: 12px; }
+#admin .ag button:hover { background: #3f505e; }
+#admin .ag button.on { background: #2f9e54; }
+#admin .ag button.bad { background: #8e2b20; }
+#admin .an { color: #9aa8b4; font-size: 11px; margin-top: 10px; }
+#fps { position: fixed; left: 50%; bottom: 4px; transform: translateX(-50%); background: rgba(0,0,0,0.6); color: #fff; font: 700 11px ui-monospace, Consolas, monospace; padding: 2px 8px; border-radius: 6px; pointer-events: none; }
+
 /* сообщения и окна */
 #toasts { position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
 .toast { background: var(--card); color: var(--ink); border-radius: 12px; padding: 8px 16px; box-shadow: var(--shadow); font-weight: 700; font-size: 14px; text-align: center; animation: tin 0.25s ease-out; transition: opacity 0.5s, transform 0.5s; }
@@ -165,19 +180,33 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
 <div id="loading">🪵 Лесопилка загружается…</div>
 
 <script>
+  // Номер сборки: меняется при каждом обновлении, чтобы браузер не смешал старые и новые файлы
+  window.LESO_BUILD = '2026.09.29-2';
+  // Тестовая сборка: адрес …/lesopilka-test/ или локальный сервер — своё сохранение и админка F2
+  window.LESO_TEST = /lesopilka-test/.test(location.pathname) || ['localhost', '127.0.0.1'].indexOf(location.hostname) >= 0;
   // если three.js не загрузился с CDN — скажем об этом, а не будем молча висеть
   setTimeout(function () {
     var l = document.getElementById('loading');
     if (l && !window.THREE) l.textContent = 'Не удалось загрузить графику (three.js с unpkg.com). Нужен интернет — проверь подключение и обнови страницу.';
   }, 12000);
 </script>
+<script type="importmap">
+  { "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  } }
+</script>
 <script type="module">
-  import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+  import * as THREE from 'three';
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+  import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   window.THREE = THREE;
-  const files = ['util', 'config', 'nav', 'sim', 'bot', 'models', 'render', 'ui', 'input', 'audio', 'main'];
+  window.GLTFLoader = GLTFLoader;
+  window.SkeletonUtils = SkeletonUtils;
+  const files = ['util', 'config', 'nav', 'sim', 'bot', 'models', 'render', 'ui', 'input', 'audio', 'admin', 'main'];
   const load = (f) => new Promise((res, rej) => {
     const s = document.createElement('script');
-    s.src = 'src/' + f + '.js';
+    s.src = 'src/' + f + '.js?v=' + window.LESO_BUILD;
     s.onload = res;
     s.onerror = () => rej(new Error(f + '.js'));
     document.body.appendChild(s);
