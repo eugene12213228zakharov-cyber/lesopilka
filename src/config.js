@@ -368,10 +368,10 @@ const FLOORS = [
 const FLOOR_BONUS = 1.1;    // ×1.1 к ценам продажи за каждый построенный этаж
 
 // ───────── Идеи и баги (кнопка «💬») ─────────
-// repo — куда открывать задачу на GitHub (Issues репозитория общей версии).
-// form — если подключить Google-форму, отзывы уходят прямо из игры, без аккаунта GitHub:
+// form — Google-форма владельца: отзывы уходят прямо из игры, без всяких аккаунтов; пока null — кнопки нет.
+// Строку для неё печатает node tools/formfields.js <ссылка на форму>:
 //   { url: 'https://docs.google.com/forms/d/e/<id>/formResponse', kind: 'entry.…', text: 'entry.…', name: 'entry.…', tech: 'entry.…' }
-const FEEDBACK = { repo: 'eugene12213228zakharov-cyber/lesopilka', form: null };
+const FEEDBACK = { form: null };
 
 // ───────── Прочие константы ─────────
 const TUNE = {

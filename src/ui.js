@@ -16,7 +16,8 @@ class UI {
     $('bTower').onclick = () => this.toggle('tower');
     $('bWork').onclick = () => this.toggle('work');
     $('bMenu').onclick = () => this.toggle('menu');
-    $('bFb').onclick = () => this.feedback();
+    if (FEEDBACK.form) $('bFb').onclick = () => this.feedback();
+    else $('bFb').style.display = 'none';   // форма не подключена — отзывы слать некуда, кнопку не показываем
     $('pClose').onclick = () => this.close();
     $('pBody').addEventListener('click', (e) => this.onPanelClick(e));
     $('modal').addEventListener('click', (e) => { if (e.target.id === 'modal' || e.target.dataset.close !== undefined) this.hideModal(); });
@@ -163,7 +164,7 @@ class UI {
     } else if (this.panel === 'menu') {
       const snd = this.audio.on;
       h += `<button class="wide" data-act="sound">${snd ? '🔊 Звук включён' : '🔇 Звук выключен'}</button>`;
-      h += '<button class="wide" data-act="feedback">💬 Предложить идею или сообщить о баге</button>';
+      if (FEEDBACK.form) h += '<button class="wide" data-act="feedback">💬 Предложить идею или сообщить о баге</button>';
       h += '<div class="sec">Управление</div><div class="note">Зажми мышь и тяни — человечек бежит в ту сторону (как джойстик на телефоне). ' +
         'Или WASD / стрелки. Колёсико — приблизить. Встал на площадку — предметы и деньги перетекают сами.<br>' +
         'U — улучшения, B — небоскрёб, R — рабочие, M — звук, Esc — закрыть.</div>';
@@ -261,9 +262,8 @@ class UI {
   }
 
   // ───────── идеи и баги ─────────
-  // Окно отзыва: тип, текст, имя, данные об игре. Уходит в GitHub Issues репозитория FEEDBACK.repo (открывается
-  // готовая страница — нажать «Create»), а если подключена Google-форма (FEEDBACK.form) — прямо из игры.
-  // Черновик хранится в браузере, пока не отправлен.
+  // Окно отзыва: тип, текст, имя, данные об игре. Уходит прямо из игры в Google-форму (FEEDBACK.form), без аккаунтов;
+  // без формы кнопки нет. Черновик хранится в браузере, пока не отправлен.
   fbDraft(v) {
     const key = 'lesopilka_feedback';
     try {
@@ -296,7 +296,6 @@ class UI {
       `<input id="fbName" maxlength="40" placeholder="Как тебя зовут (необязательно)" value="${esc(d.name)}">` +
       `<label class="chk"><input type="checkbox" id="fbTech"${d.tech ? ' checked' : ''}> Приложить данные об игре: версия, браузер, этаж, ошибки</label>` +
       '<button id="fbSend">Отправить</button> <button id="fbCopy" class="ghost">Скопировать текст</button> <button data-close class="ghost">Закрыть</button>' +
-      `<p class="small" id="fbNote">${FEEDBACK.form ? '' : 'Откроется страница GitHub с готовым текстом — там нажми «Create» (нужен вход в GitHub). Нет аккаунта — жми «Скопировать» и пришли текст разработчику.'}</p>` +
       '</div>');
     const box = $('modalBox');
     const read = () => ({
@@ -309,40 +308,26 @@ class UI {
     });
     $('fbText').oninput = save; $('fbName').oninput = save; $('fbTech').onchange = save;
     const compose = () => {
-      const v = read(), kind = kinds.find((k) => k[0] === v.kind)[1];
-      const text = v.text.trim();
-      const title = `[${kind.slice(3)}] ${text.split('\n')[0].slice(0, 70) || 'без описания'}`;
-      const body = `**Тип:** ${kind}` + (v.name.trim() ? `\n**От:** ${v.name.trim()}` : '') + `\n\n${text || '—'}` +
-        (v.tech ? `\n\n<details><summary>Данные об игре</summary>\n\n\`\`\`\n${this.techInfo()}\n\`\`\`\n</details>` : '');
-      return { v, title, body, plain: `${title}\n\n${text}` + (v.name.trim() ? `\n— ${v.name.trim()}` : '') + (v.tech ? `\n\n${this.techInfo()}` : '') };
+      const v = read(), kind = kinds.find((k) => k[0] === v.kind)[1].slice(3);
+      const text = v.text.trim(), name = v.name.trim();
+      return { v, kind, text, name, plain: `[${kind}] ${text}` + (name ? `\n— ${name}` : '') + (v.tech ? `\n\n${this.techInfo()}` : '') };
     };
     const copy = (t) => {
       try { navigator.clipboard.writeText(t); } catch (e) { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
     };
     $('fbCopy').onclick = () => { copy(compose().plain); this.toast('📋 Текст скопирован — пришли его разработчику'); };
     $('fbSend').onclick = () => {
-      const c = compose();
-      if (!c.v.text.trim()) { this.toast('Напиши, что случилось или что предлагаешь', 'bad'); $('fbText').focus(); return; }
-      const F = FEEDBACK.form;
-      if (F) {
-        // Google-форма: отправка без аккаунта; ответ форма не показывает (no-cors) — считаем, что дошло
-        const data = new URLSearchParams();
-        data.append(F.kind, c.v.kind === 'bug' ? 'Баг' : c.v.kind === 'idea' ? 'Идея' : 'Другое');
-        data.append(F.text, c.v.text.trim());
-        if (F.name) data.append(F.name, c.v.name.trim());
-        if (F.tech && c.v.tech) data.append(F.tech, this.techInfo());
-        fetch(F.url, { method: 'POST', mode: 'no-cors', body: data })
-          .then(() => { this.fbDraft(null); this.hideModal(); this.toast('✅ Спасибо! Записали', 'big'); })
-          .catch(() => this.toast('Не получилось отправить — проверь интернет или нажми «Скопировать»', 'bad'));
-        return;
-      }
-      const url = `https://github.com/${FEEDBACK.repo}/issues/new?title=${encodeURIComponent(c.title)}&body=${encodeURIComponent(c.body)}` +
-        `&labels=${c.v.kind === 'bug' ? 'bug' : c.v.kind === 'idea' ? 'enhancement' : ''}`;
-      copy(c.plain);
-      window.open(url, '_blank', 'noopener');
-      this.fbDraft(null);
-      this.hideModal();
-      this.toast('Открыл GitHub — нажми там «Create». Текст на всякий случай скопирован', 'big');
+      const c = compose(), F = FEEDBACK.form;
+      if (!c.text) { this.toast('Напиши, что случилось или что предлагаешь', 'bad'); $('fbText').focus(); return; }
+      // Google-форма: отправка без аккаунта; ответ форма не показывает (no-cors) — считаем, что дошло
+      const data = new URLSearchParams();
+      data.append(F.kind, c.kind);
+      data.append(F.text, c.text);
+      if (F.name) data.append(F.name, c.name);
+      if (F.tech && c.v.tech) data.append(F.tech, this.techInfo());
+      fetch(F.url, { method: 'POST', mode: 'no-cors', body: data })
+        .then(() => { this.fbDraft(null); this.hideModal(); this.toast('✅ Спасибо! Записали', 'big'); })
+        .catch(() => this.toast('Не получилось отправить — проверь интернет или нажми «Скопировать» и пришли текст разработчику', 'bad'));
     };
     setTimeout(() => $('fbText') && $('fbText').focus(), 50);
   }
