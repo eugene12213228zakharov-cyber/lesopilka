@@ -371,7 +371,12 @@ const FLOOR_BONUS = 1.1;    // ×1.1 к ценам продажи за кажд�
 // form — Google-форма владельца: отзывы уходят прямо из игры, без всяких аккаунтов; пока null — кнопки нет.
 // Строку для неё печатает node tools/formfields.js <ссылка на форму>:
 //   { url: 'https://docs.google.com/forms/d/e/<id>/formResponse', kind: 'entry.…', text: 'entry.…', name: 'entry.…', tech: 'entry.…' }
-const FEEDBACK = { form: null };
+const FEEDBACK = {
+  form: {
+    url: 'https://docs.google.com/forms/d/e/1FAIpQLScsmbrLQfP5fg0rVasMgWZO5-b-ZywDIuRKFoYvmmtHoKGYQQ/formResponse',
+    kind: 'entry.650160950', text: 'entry.956544550', name: 'entry.1454339526', tech: 'entry.1837383089',
+  },
+};
 
 // ───────── Прочие константы ─────────
 const TUNE = {
