@@ -6,13 +6,87 @@ const NAV_CELL = 0.5;
 const TRIG_CELL = 0.5;
 const SAVE_VERSION = 1;
 
+// ───────── дороги: маршруты машин ─────────
+// Путь — ломаная с накопленной длиной cum; повороты скруглены дугами, на дуге своя предельная скорость.
+function roadArc(cx, cz, r, a0, a1, n = 8) {
+  const out = [];
+  for (let i = 0; i <= n; i++) { const a = ((a0 + ((a1 - a0) * i) / n) * Math.PI) / 180; out.push([cx + r * Math.cos(a), cz + r * Math.sin(a)]); }
+  return out;
+}
+function roadPath(pts, arcs) {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + dist(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]));
+  return { pts, cum, len: cum[cum.length - 1], arcs };
+}
+// путь от начала до точки с данным x на прямом участке вдоль X
+function roadSAtX(P, x) {
+  for (let i = 0; i < P.pts.length - 1; i++) {
+    const a = P.pts[i], b = P.pts[i + 1];
+    if (Math.abs(a[1] - b[1]) < 1e-6 && (x - a[0]) * (x - b[0]) <= 0) return P.cum[i] + Math.abs(x - a[0]);
+  }
+  return null;
+}
+// позиция и направление на пути: пишет x, z, dx, dz в o (o.seg — кэш участка)
+function roadAt(P, s, o) {
+  s = clamp(s, 0, P.len);
+  let i = o.seg || 0;
+  while (i > 0 && P.cum[i] > s) i--;
+  while (i < P.pts.length - 2 && P.cum[i + 1] < s) i++;
+  o.seg = i;
+  const a = P.pts[i], b = P.pts[i + 1], L = P.cum[i + 1] - P.cum[i] || 1, t = (s - P.cum[i]) / L;
+  o.x = a[0] + (b[0] - a[0]) * t; o.z = a[1] + (b[1] - a[1]) * t;
+  o.dx = (b[0] - a[0]) / L; o.dz = (b[1] - a[1]) / L;
+}
+const TRUCK_PATHS = (() => {
+  const L = ROAD.lane, cx = ROAD.coastX, latA = 4;   // боковое ускорение на повороте, м/с²
+  const mk = (parts, arcDefs) => {
+    const pts = [];
+    for (const p of parts) for (const q of p) { const l = pts[pts.length - 1]; if (!l || Math.abs(l[0] - q[0]) + Math.abs(l[1] - q[1]) > 1e-6) pts.push(q); }
+    const P = roadPath(pts, []);
+    for (const [x0, z0, r] of arcDefs) {   // дуга начинается в точке (x0, z0)
+      const i = pts.findIndex((p) => Math.abs(p[0] - x0) < 1e-6 && Math.abs(p[1] - z0) < 1e-6);
+      P.arcs.push({ s0: P.cum[i], s1: P.cum[i] + (r * Math.PI) / 2, v: Math.sqrt(latA * r) });
+    }
+    return P;
+  };
+  // лесовоз: из западного тоннеля на восток по южной полосе, после разгрузки — налево, на север в северный тоннель
+  // стоп-линии светофоров на пути — по порядку
+  const lines = (P, key) => LIGHTS.map((l) => ({ id: l.id, s: roadSAtX(P, l[key]) })).filter((l) => l.s !== null).sort((a, b) => a.s - b.s);
+  const log = mk([[[-96, L], [cx - 2.5, L]], roadArc(cx - 2.5, L - 4, 4, 90, 0), [[cx + L, -34]]], [[cx - 2.5, L, 4]]);
+  log.stop = roadSAtX(log, TUNE.logTruckStopX); log.lines = lines(log, 'stopE');
+  // оптовик: из северного тоннеля на юг, направо — на запад по северной полосе, после погрузки — в западный тоннель
+  const opt = mk([[[cx - L, -28], [cx - L, -L - 4.5]], roadArc(cx - L - 4.5, -L - 4.5, 4.5, 0, 90), [[-104, -L]]], [[cx - L, -L - 4.5, 4.5]]);
+  opt.stop = roadSAtX(opt, TUNE.optTruckStopX); opt.lines = lines(opt, 'stopW');
+  return { log, opt };
+})();
+const TRUCK_HALF = [3.1, 1.15];   // полудлина и полуширина машины
+
+// Проезжая часть для рабочих непроходима, кроме переходов (путь сам строится через «зебры»)
+const ROAD_BLOCKS = (() => {
+  const out = [], h = ROAD.half + 0.1, w = 1.5;
+  const xs = CROSSINGS.filter((c) => c.across === 'z').map((c) => c.x).sort((a, b) => a - b);
+  let x0 = MAP.x0;
+  for (const cx of xs) { out.push({ x0, z0: -h, x1: cx - w, z1: h }); x0 = cx + w; }
+  out.push({ x0, z0: -h, x1: ROAD.coastX + h, z1: h });
+  const zs = CROSSINGS.filter((c) => c.across === 'x').map((c) => c.z).sort((a, b) => a - b);
+  let z0 = h;
+  for (const cz of zs) { out.push({ x0: -h, z0, x1: h, z1: cz - w }); z0 = cz + w; }
+  out.push({ x0: -h, z0, x1: h, z1: MAP.z1 });
+  out.push({ x0: ROAD.coastX - h, z0: ROAD.tunnelN.z, x1: ROAD.coastX + h, z1: -h });
+  return out;
+})();
+
 class Game {
   constructor(save) {
     this.events = [];
     this.silent = false;   // не копить события (бот в node)
     this.fast = false;     // перемотка офлайна: игрок стоит, время игры не идёт
     this.input = { x: 0, z: 0 };
-    this.nav = new NavGrid(MAP, NAV_CELL);
+    this.nav = new NavGrid(MAP, NAV_CELL);       // по правилам: дорогу — только по переходам
+    this.navFree = new NavGrid(MAP, NAV_CELL);   // для спешащих: напрямик через дорогу
+    this.hrs = { s: 11 };                        // генератор «спешит ли рабочий» — отдельно от случайных чисел игры
+    this.lights = {};
+    for (const l of LIGHTS) this.lights[l.id] = { ph: 'walk', t: 99 };
     this.tnx = Math.ceil((MAP.x1 - MAP.x0) / TRIG_CELL);
     this.tnz = Math.ceil((MAP.z1 - MAP.z0) / TRIG_CELL);
     this.tgrid = new Int16Array(this.tnx * this.tnz);
@@ -29,6 +103,11 @@ class Game {
     this.craneAcc = 0;
     this.cashierHere = false;
     this.goal = null;
+    this.soft = false;     // бот: машины его пропускают и не сбивают (прогон баланса меряет экономику, а не ловкость)
+    this.loose = [];       // что выронил игрок, когда его сбила машина: лежит на земле, можно подобрать
+    this.lrs = { s: 7 };   // свой генератор для разлёта — не сбивает случайные числа игры
+    this.c1q = [];         // очередь покупателей досок у входа на тротуаре
+    this.c4q = [[], []];   // очереди у двух входов в магазин
     this.load(save);
   }
 
@@ -47,7 +126,7 @@ class Game {
       ship: null,
       sitePriority: true,
       tut: 0,
-      stats: { made: {}, floorsT: [], zonesT: {}, sold: 0, ships: 0, buys: 0 },
+      stats: { made: {}, floorsT: [], zonesT: {}, sold: 0, ships: 0, buys: 0, hitMe: 0, hitW: 0 },
       savedAt: 0,
     };
   }
@@ -91,6 +170,7 @@ class Game {
     const k = this.workers.length;
     w.off = [(((k * 37) % 7) - 3) * 0.16, (((k * 53) % 5) - 2) * 0.2];
     w.look = k;
+    w.rash = 0.08 + ((k * 29) % 7) * 0.035;   // как часто спешит и перебегает дорогу где попало: 8–29%
     this.workers.push(w);
     if (!rec) this.ev({ t: 'hire', w });
     return w;
@@ -152,13 +232,17 @@ class Game {
     this.walls.push({ x0: sea, z0: MAP.z0 - 5, x1: MAP.x1 + 5, z1: PIER.z0 });
     this.walls.push({ x0: sea, z0: PIER.z1, x1: MAP.x1 + 5, z1: MAP.z1 + 5 });
     this.walls.push({ x0: PIER.x1, z0: PIER.z0 - 1, x1: MAP.x1 + 5, z1: PIER.z1 + 1 });
+    const tn = ROAD.tunnelN;   // холм северного тоннеля
+    this.walls.push({ x0: tn.x0, z0: tn.z1, x1: tn.x1, z1: tn.z });
     // навигация
-    const nav = this.nav;
-    nav.clear();
     // запас больше радиуса игрока: по этим путям ходит и бот-игрок, который цепляется за углы
     const inf = (r) => ({ x0: r.x0 - 0.55, z0: r.z0 - 0.55, x1: r.x1 + 0.55, z1: r.z1 + 0.55 });
-    for (const r of this.solids) nav.blockRect(inf(r));
-    for (const r of this.walls) nav.blockRect(inf(r));
+    for (const nav of [this.nav, this.navFree]) {
+      nav.clear();
+      for (const r of this.solids) nav.blockRect(inf(r));
+      for (const r of this.walls) nav.blockRect(inf(r));
+    }
+    for (const r of ROAD_BLOCKS) this.nav.blockRect(r);
     this.buildTriggers();
     // игрока, оказавшегося внутри нового станка, выталкиваем
     if (this.hits(this.pl.x, this.pl.z, TUNE.playerR)) this.unstick(this.pl);
@@ -281,7 +365,9 @@ class Game {
     if (!this.fast) s.playT += dt;
     this.cashierHere = false;
     if (!this.fast) { this.movePlayer(dt); this.playerAct(dt); }
+    if (this.loose.length) this.looseStep(dt);
     for (const w of this.workers) this.workerStep(w, dt);
+    this.lightStep(dt);
     this.trucksStep(dt);
     this.c1Step(dt);
     this.c4Step(dt);
@@ -295,6 +381,7 @@ class Game {
   // ───────── игрок ─────────
   movePlayer(dt) {
     const pl = this.pl;
+    if (pl.stun > 0) { pl.stun -= dt; pl.moving = false; return; }   // сбила машина — секунду приходит в себя
     let vx = this.input.x, vz = this.input.z;
     const m = Math.hypot(vx, vz);
     if (m > 1) { vx /= m; vz /= m; }
@@ -324,6 +411,7 @@ class Game {
     };
     for (const q of this.solids) if (test(q)) return true;
     for (const q of this.walls) if (test(q)) return true;
+    for (const tr of this.trucks) if (this.truckTouch(tr, x, z, r)) return true;   // сквозь машину не пройти
     return false;
   }
 
@@ -337,6 +425,7 @@ class Game {
   }
 
   playerAct(dt) {
+    this.playerLoose(dt);
     const pl = this.pl, t = this.trigAt(pl.x, pl.z);
     if (!t) { pl.xacc = 0; pl.chop = 0; pl.plant = 0; pl.on = null; return; }
     if (pl.on !== t) { pl.on = t; pl.xacc = 0; pl.chop = 0; pl.plant = 0; }
@@ -433,13 +522,25 @@ class Game {
   }
 
   // ───────── движение по пути ─────────
-  goTo(a, x, z) { a.path = this.nav.findPath(a.x, a.z, x, z); a.pi = 0; a.moving = true; }
+  // Все ходят по правилам: дорогу — по переходам. Рабочий, которому надо на ту сторону, иногда спешит (w.rash):
+  // идёт напрямик и не ждёт светофора — машины таких не ждут и могут сбить
+  goTo(a, x, z) {
+    let nav = this.nav;
+    a.hurry = false;
+    if (a.kind === 'worker' && this.crossesRoad(a.x, a.z, x, z) && rngNext(this.hrs) < a.rash) { nav = this.navFree; a.hurry = true; }
+    a.path = nav.findPath(a.x, a.z, x, z); a.pi = 0; a.moving = true;
+  }
   goPile(a, id) {
     const p = PILES[id], o = a.off || [0, 0];
     this.goTo(a, p.x + clamp(o[0], -p.w / 2 + 0.3, p.w / 2 - 0.3), p.z + clamp(o[1], -p.d / 2 + 0.3, p.d / 2 - 0.3));
   }
   follow(a, dt, sp) {
     if (!a.path) { a.moving = false; return true; }
+    // у перехода со светофором — ждём зелёный (спешащий не ждёт)
+    if (a.kind === 'worker' && !a.hurry && a.pi < a.path.length) {
+      const tx = a.path[a.pi][0], tz = a.path[a.pi][1], dx = tx - a.x, dz = tz - a.z, d = Math.hypot(dx, dz);
+      if (d > 1e-4 && this.crossWait(a.x, a.z, a.x + (dx / d) * 0.35, a.z + (dz / d) * 0.35)) { a.moving = false; a.face = Math.atan2(dx, dz); return false; }
+    }
     let mv = sp * dt;
     while (mv > 0 && a.pi < a.path.length) {
       const tx = a.path[a.pi][0], tz = a.path[a.pi][1];
@@ -456,6 +557,7 @@ class Game {
 
   // ───────── рабочие ─────────
   workerStep(w, dt) {
+    if (w.stun > 0) { w.stun -= dt; w.moving = false; return; }   // сбила машина — лежит, потом встаёт
     if (!w.on) {
       if (w.task !== 'off') { this.release(w); w.task = 'off'; w.path = null; w.moving = false; }
       return;
@@ -698,68 +800,338 @@ class Game {
     this.goPile(w, best);
   }
 
+  // ───────── светофоры с датчиком машин ─────────
+  // Пешеходам зелёный, пока к стоп-линии не подъедет машина; тогда мигает, всем красный, машинам зелёный, пока
+  // едут (от carMin до carMax), жёлтый, всем красный — и снова пешеходам. Состояние не сохраняется.
+  // car — машины на главной, walk — пешеходы через главную: g — зелёный, gb — мигает, y — жёлтый, r — красный.
+  // У перекрёстка ещё carS / walkS — выезд с южной дороги (машин там нет — всегда красный) и переход через неё.
+  lightState(id = 'c') {
+    const ph = this.lights[id].ph;
+    return {
+      car: ph === 'car' ? 'g' : ph === 'carY' ? 'y' : 'r',
+      walk: ph === 'walk' ? 'g' : ph === 'walkB' ? 'gb' : 'r',
+      carS: 'r', walkS: 'g',
+    };
+  }
+
+  lightStep(dt) {
+    const L = LIGHT;
+    for (const cfg of LIGHTS) {
+      const st = this.lights[cfg.id];
+      st.t += dt;
+      // машины, которым нужен этот светофор: стоп-линия впереди ближе detect, и ещё не проехали переход
+      let req = false;
+      for (const tr of this.trucks) {
+        if (tr.state === 'work') continue;
+        const ln = tr.P.lines.find((l) => l.id === cfg.id);
+        if (!ln || (tr.state === 'in' && ln.s > tr.P.stop)) continue;
+        const d = ln.s - (tr.s + TRUCK_HALF[0]);
+        if (d < L.detect && d > -(3 + 2 * TRUCK_HALF[0] + 2)) { req = true; break; }
+      }
+      const go = (ph) => { st.ph = ph; st.t = 0; };
+      if (st.ph === 'walk') { if (req && st.t >= L.walkMin) go('walkB'); }
+      else if (st.ph === 'walkB') { if (st.t >= L.walkBlink) go('red1'); }
+      else if (st.ph === 'red1') { if (st.t >= L.allRed) go('car'); }
+      else if (st.ph === 'car') { if ((st.t >= L.carMin && !req) || st.t >= L.carMax) go('carY'); }
+      else if (st.ph === 'carY') { if (st.t >= L.carYellow) go('red2'); }
+      else if (st.ph === 'red2') { if (st.t >= L.allRed) go('walk'); }
+    }
+  }
+
+  // Надо ли подождать, прежде чем шагнуть (ax, az) → (nx, nz) на главную дорогу: на светофоре — пока пешеходам
+  // не зелёный, на «зебре» — пока подъезжает машина
+  crossWait(ax, az, nx, nz) {
+    const h = ROAD.half + 0.15;
+    if (Math.abs(az) < h || Math.abs(nz) >= h) return false;
+    for (const c of CROSSINGS) {
+      if (c.across !== 'z' || Math.abs(ax - c.x) >= 2.2) continue;
+      return c.signal ? this.lightState(c.signal).walk !== 'g' : this.carComing(c.x);
+    }
+    return false;
+  }
+  // едет ли к переходу у x машина по главной (доберётся за ~3 с) или ещё не проехала его
+  carComing(x) {
+    for (const tr of this.trucks) {
+      if (tr.state === 'work' || Math.abs(tr.z) > ROAD.half) continue;
+      const d = (x - tr.x) * Math.sign(tr.dx || 1);
+      if (d > -(TRUCK_HALF[0] + 2) && d < Math.max(8, tr.v * 3) + TRUCK_HALF[0]) return true;
+    }
+    return false;
+  }
+  // путь пересекает главную или южную дорогу
+  crossesRoad(ax, az, bx, bz) {
+    const h = ROAD.half + 0.2;
+    const main = az * bz < 0 && Math.abs(az) > h && Math.abs(bz) > h && Math.min(ax, bx) < ROAD.coastX;
+    const south = ax * bx < 0 && Math.abs(ax) > h && Math.abs(bx) > h && Math.max(az, bz) > h;
+    return main || south;
+  }
+
   // ───────── лесовозы и оптовик ─────────
+  // Едут по маршрутам TRUCK_PATHS из тоннелей: тормозят у склада, на красный, за другой машиной и перед людьми.
+  // Игрока не пропускают: стоящая машина — стена, едущая сбивает, и всё из рук разлетается по земле.
+  newTruck(kind, o) {
+    const P = TRUCK_PATHS[kind];
+    const tr = Object.assign({ kind, state: 'in', P, s: 0, v: TUNE.truckSpeed, seg: 0, acc: 0, stall: 0, dir: kind === 'log' ? 1 : -1, hornT: 0 }, o);
+    roadAt(P, 0, tr);
+    tr.face = Math.atan2(-tr.dz, tr.dx);
+    return tr;
+  }
+
   trucksStep(dt) {
     this.logTimer -= dt;
     if (this.logTimer <= 0 && !this.trucks.some((t) => t.kind === 'log' && t.state !== 'out')) {
       this.logTimer = this.uv('u_trFreq');
-      this.trucks.push({ kind: 'log', x: MAP.x0 - 12, z: TUNE.logTruckLane, dir: 1, state: 'in', load: this.uv('u_trLoad'), acc: 0, stall: 0 });
+      this.trucks.push(this.newTruck('log', { load: this.uv('u_trLoad') }));
     }
     if (this.pileSet.has('opt')) {
       this.optTimer -= dt;
       if (this.optTimer <= 0 && !this.trucks.some((t) => t.kind === 'opt' && t.state !== 'out')) {
         this.optTimer = this.uv('u_optFreq');
-        this.trucks.push({ kind: 'opt', x: MAP.x1 + 12, z: TUNE.optTruckLane, dir: -1, state: 'in', load: 0, acc: 0, stall: 0, stack: [] });
+        this.trucks.push(this.newTruck('opt', { load: 0, stack: [] }));
       }
     }
     for (const tr of this.trucks) {
-      const mv = TUNE.truckSpeed * dt;
-      if (tr.state === 'in') {
-        const stop = tr.kind === 'log' ? TUNE.logTruckStopX : TUNE.optTruckStopX;
-        if ((stop - tr.x) * tr.dir <= mv) { tr.x = stop; tr.state = 'work'; tr.acc = 0; } else tr.x += mv * tr.dir;
-      } else if (tr.state === 'work') {
-        tr.acc += dt;
-        const step = tr.kind === 'log' ? 0.12 : 0.1;
-        while (tr.acc >= step) {
-          tr.acc -= step;
-          if (tr.kind === 'log') {
-            if (tr.load > 0 && this.space('yard', 'log') > 0) {
-              tr.load--; this.put('yard', 'log'); tr.stall = 0;
-              this.ev({ t: 'x', it: 'log', from: { tr }, to: { p: 'yard' } });
-            } else {
-              tr.stall += step;
-              if (tr.load <= 0 || tr.stall > 1.5) { tr.state = 'out'; break; }
-            }
-          } else {
-            const it = this.firstItem('opt');
-            if (it && tr.load < TUNE.optTruckLoad) {
-              this.take('opt', it); tr.load++; tr.stall = 0;
-              if (tr.stack.length < 12) tr.stack.push(it);
-              this.addCash('cash3', this.price(it) * TUNE.optShare, TUNE.optTruckStopX, 4);
-              this.ev({ t: 'x', it, from: { p: 'opt' }, to: { tr } });
-            } else {
-              tr.stall += step;
-              if (tr.load >= TUNE.optTruckLoad || tr.stall > 1.5) { tr.state = 'out'; break; }
-            }
-          }
-        }
-      } else tr.x += mv * tr.dir;
+      if (tr.state === 'work') { this.truckWork(tr, dt); continue; }
+      this.truckDrive(tr, dt);
+      if (tr.state === 'in' && tr.s >= tr.P.stop - 0.02 && tr.v < 0.5) { tr.state = 'work'; tr.acc = 0; tr.v = 0; }
     }
-    this.trucks = this.trucks.filter((t) => t.x > MAP.x0 - 20 && t.x < MAP.x1 + 20);
+    this.trucks = this.trucks.filter((t) => t.s < t.P.len - 0.01);
+  }
+
+  // разгрузка лесовоза и погрузка оптовика — как было
+  truckWork(tr, dt) {
+    tr.acc += dt;
+    const step = tr.kind === 'log' ? 0.12 : 0.1;
+    while (tr.acc >= step) {
+      tr.acc -= step;
+      if (tr.kind === 'log') {
+        if (tr.load > 0 && this.space('yard', 'log') > 0) {
+          tr.load--; this.put('yard', 'log'); tr.stall = 0;
+          this.ev({ t: 'x', it: 'log', from: { tr }, to: { p: 'yard' } });
+        } else {
+          tr.stall += step;
+          if (tr.load <= 0 || tr.stall > 1.5) { tr.state = 'out'; break; }
+        }
+      } else {
+        const it = this.firstItem('opt');
+        if (it && tr.load < TUNE.optTruckLoad) {
+          this.take('opt', it); tr.load++; tr.stall = 0;
+          if (tr.stack.length < 12) tr.stack.push(it);
+          this.addCash('cash3', this.price(it) * TUNE.optShare, TUNE.optTruckStopX, 4);
+          this.ev({ t: 'x', it, from: { p: 'opt' }, to: { tr } });
+        } else {
+          tr.stall += step;
+          if (tr.load >= TUNE.optTruckLoad || tr.stall > 1.5) { tr.state = 'out'; break; }
+        }
+      }
+    }
+  }
+
+  truckDrive(tr, dt) {
+    const B = TUNE.truckBrake, P = tr.P, H = TRUCK_HALF[0];
+    let lim = tr.state === 'in' ? P.stop - tr.s : Infinity;   // сколько можно проехать до обязательной остановки
+    for (const ln of P.lines) {   // ближайшая впереди стоп-линия
+      const d = ln.s - (tr.s + H);
+      if (d < -0.5) continue;
+      const c = this.lightState(ln.id).car;
+      if (c === 'r' || (c === 'y' && d > ((tr.v * tr.v) / (2 * B)) * 0.8)) lim = Math.min(lim, Math.max(0, d));
+      break;
+    }
+    lim = Math.min(lim, this.truckGap(tr, dt));
+    let vmax = TUNE.truckSpeed;
+    for (const a of P.arcs) {   // перед поворотом сбрасываем скорость заранее
+      if (tr.s > a.s1) continue;
+      vmax = Math.min(vmax, Math.sqrt(a.v * a.v + 2 * B * 0.6 * Math.max(0, a.s0 - tr.s - 1)));
+    }
+    const target = Math.min(vmax, Math.sqrt(2 * B * Math.max(0, lim)));
+    tr.v = tr.v < target ? Math.min(target, tr.v + TUNE.truckAcc * dt) : Math.max(target, tr.v - B * 1.6 * dt);
+    let ds = tr.v * dt;
+    if (ds > lim) { ds = Math.max(0, lim); if (lim < 0.01) tr.v = 0; }
+    tr.s += ds;
+    roadAt(P, tr.s, tr);
+    tr.face = Math.atan2(-tr.dz, tr.dx);
+    if (!this.fast) { this.truckVsPlayer(tr, dt); this.truckVsWorkers(tr); }
+  }
+
+  // рабочие: спешащего, выскочившего под колёса, машина сбивает; остальных — только отодвигает
+  truckVsWorkers(tr) {
+    for (const w of this.workers) {
+      if (w.stun > 0 || !this.truckTouch(tr, w.x, w.z, 0.35)) continue;
+      if (tr.v > 2.5 && w.hurry && w.moving) this.hitWorker(tr, w);
+      else this.truckPush(tr, w);
+    }
+  }
+
+  // свободная дорога впереди: машина на своей полосе и люди на проезжей части (игрока не ждём)
+  truckGap(tr, dt) {
+    const fx = tr.dx, fz = tr.dz, H = TRUCK_HALF[0];
+    const look = (tr.v * tr.v) / (2 * TUNE.truckBrake) + 10;
+    let gap = Infinity, ped = Infinity;
+    for (const o of this.trucks) {
+      if (o === tr) continue;
+      const rx = o.x - tr.x, rz = o.z - tr.z, f = rx * fx + rz * fz;
+      if (f <= 0 || f > look + 2 * H) continue;
+      if (Math.abs(-rx * fz + rz * fx) > 1.5 || o.dx * fx + o.dz * fz < 0.3) continue;
+      gap = Math.min(gap, f - 2 * H - 1.8);
+    }
+    // ждём только тех, кто на проезжей части перед машиной (стоящих на тротуаре у «зебры» — нет)
+    const onRoad = (a) => Math.abs(a.z) < ROAD.half || Math.abs(a.x - ROAD.coastX) < ROAD.half;
+    const test = (a) => {
+      const rx = a.x - tr.x, rz = a.z - tr.z, f = rx * fx + rz * fz;
+      if (f <= 0 || f > look + H || Math.abs(-rx * fz + rz * fx) > 1.6 || !onRoad(a)) return;
+      ped = Math.min(ped, f - H - 1.1);
+    };
+    for (const w of this.workers) if (!(w.hurry && w.moving)) test(w);   // перебегающего где попало не ждём
+    for (const c of this.cust) if (c.state !== 'far' && c.state !== 'gone') test(c);
+    if (this.soft) test(this.pl);
+    // человек стоит на дороге дольше 3 с — дальше едем тихо, чтобы машина не встала навсегда
+    if (ped < Infinity && tr.v < 0.5) tr.pedWait = (tr.pedWait || 0) + dt;
+    else if (ped === Infinity) tr.pedWait = 0;
+    if (ped < Infinity) gap = Math.min(gap, (tr.pedWait || 0) < 3 ? ped : Math.max(ped, 0.02));
+    return Math.max(0, gap);
+  }
+
+  // касается ли машина круга радиусом r
+  truckTouch(tr, x, z, r) {
+    const rx = x - tr.x, rz = z - tr.z;
+    const f = rx * tr.dx + rz * tr.dz, l = -rx * tr.dz + rz * tr.dx;
+    const cf = clamp(f, -TRUCK_HALF[0], TRUCK_HALF[0]), cl = clamp(l, -TRUCK_HALF[1], TRUCK_HALF[1]);
+    return (f - cf) * (f - cf) + (l - cl) * (l - cl) < r * r;
+  }
+
+  truckVsPlayer(tr, dt) {
+    const pl = this.pl;
+    tr.hornT -= dt;
+    if (!this.truckTouch(tr, pl.x, pl.z, TUNE.playerR)) {
+      // игрок на полосе впереди — сигналим
+      if (!this.soft && tr.v > 4 && tr.hornT <= 0) {
+        const rx = pl.x - tr.x, rz = pl.z - tr.z, f = rx * tr.dx + rz * tr.dz;
+        if (f > TRUCK_HALF[0] && f < 16 && Math.abs(-rx * tr.dz + rz * tr.dx) < 1.8) { tr.hornT = 3; this.ev({ t: 'horn', x: tr.x, z: tr.z }); }
+      }
+      return;
+    }
+    if (this.soft || tr.v < 2.5) this.truckPush(tr, pl);
+    else this.hitPlayer(tr);
+  }
+
+  // вытолкнуть из-под машины по ближайшей стороне
+  truckPush(tr, a) {
+    const rx = a.x - tr.x, rz = a.z - tr.z, f = rx * tr.dx + rz * tr.dz, l = -rx * tr.dz + rz * tr.dx;
+    const r = TUNE.playerR + 0.05, [hf, hl] = TRUCK_HALF;
+    let nf = f, nl = l;
+    if (hf + r - Math.abs(f) < hl + r - Math.abs(l)) nf = Math.sign(f || 1) * (hf + r); else nl = Math.sign(l || 1) * (hl + r);
+    a.x = tr.x + tr.dx * nf - tr.dz * nl; a.z = tr.z + tr.dz * nf + tr.dx * nl;
+    if (this.hits(a.x, a.z, TUNE.playerR)) this.unstick(a);
+  }
+
+  // машина сбила человека: отлетает вбок, лежит stun секунд, всё из рук разлетается по земле; сколько рассыпалось
+  knock(tr, a, stun) {
+    const rx = a.x - tr.x, rz = a.z - tr.z, f = rx * tr.dx + rz * tr.dz, side = -rx * tr.dz + rz * tr.dx >= 0 ? 1 : -1;
+    const x0 = a.x, z0 = a.z, nx = -tr.dz * side, nz = tr.dx * side;
+    a.x = tr.x + tr.dx * (f + 1.2) + nx * (TRUCK_HALF[1] + 1.9);
+    a.z = tr.z + tr.dz * (f + 1.2) + nz * (TRUCK_HALF[1] + 1.9);
+    if (this.hits(a.x, a.z, TUNE.playerR)) this.unstick(a);
+    a.stun = stun; a.stun0 = stun;
+    a.face = Math.atan2(nx, nz);
+    a.moving = false;
+    const n = a.stack.length;
+    for (let i = 0; i < n; i++) {
+      const ang = rngNext(this.lrs) * Math.PI * 2, d = 1.2 + rngNext(this.lrs) * 2.4;
+      let x = a.x + Math.cos(ang) * d + nx * 0.5, z = a.z + Math.sin(ang) * d + nz * 0.5;
+      if (this.hits(x, z, 0.2)) { x = a.x + (rngNext(this.lrs) - 0.5) * 0.6; z = a.z + (rngNext(this.lrs) - 0.5) * 0.6; }
+      this.loose.push({ it: a.stack[i], x, z, x0, z0, y0: 1.1 + i * 0.09, t: -i * 0.012, ry: rngNext(this.lrs) * Math.PI * 2 });
+    }
+    a.stack = [];
+    return n;
+  }
+  hitPlayer(tr) {
+    const n = this.knock(tr, this.pl, 0.9);
+    this.s.stats.hitMe++;
+    this.ev({ t: 'hit', x: this.pl.x, z: this.pl.z, n });
+  }
+  hitWorker(tr, w) {
+    this.release(w);
+    const n = this.knock(tr, w, 1.6);
+    w.task = null; w.path = null; w.hurry = false;
+    this.s.stats.hitW++;
+    this.ev({ t: 'hitW', w, n, x: w.x, z: w.z });
+  }
+
+  // рассыпанное игрок подбирает, проходя рядом (если есть место в руках), — с земли дольше, чем с кучи;
+  // пока приходит в себя после удара — не может. Через минуту рассыпанное пропадает
+  looseStep(dt) {
+    for (const l of this.loose) l.t += dt;
+    if (this.loose.some((l) => l.t > TUNE.looseLife)) this.loose = this.loose.filter((l) => l.t <= TUNE.looseLife);
+  }
+  playerLoose(dt) {
+    const pl = this.pl, per = TUNE.xferPlayer * 2.5;
+    if (!this.loose.length || pl.stun > 0) return;
+    pl.lacc = (pl.lacc || 0) + dt;
+    while (pl.lacc >= per) {
+      pl.lacc -= per;
+      if (pl.stack.length >= this.capOf(pl)) { pl.lacc = 0; return; }
+      let best = -1, bd = 0.95;
+      for (let i = 0; i < this.loose.length; i++) {
+        const l = this.loose[i];
+        if (l.t < 0.6) continue;   // ещё летит
+        const d = dist(pl.x, pl.z, l.x, l.z);
+        if (d < bd) { bd = d; best = i; }
+      }
+      if (best < 0) { pl.lacc = 0; return; }
+      const l = this.loose.splice(best, 1)[0];
+      pl.stack.push(l.it);
+      this.ev({ t: 'x', it: l.it, from: { loose: l }, to: { a: pl } });
+    }
+  }
+
+  // ───────── покупатели приходят и уходят по тротуарам ─────────
+  // Видит ли игрок точку: прямоугольник вокруг него с запасом — как у самой отдалённой камеры, и на узком экране
+  seen(x, z) { const p = this.pl; return Math.abs(x - p.x) < 44 && z > p.z - 58 && z < p.z + 24; }
+  // с какого места тротуара (x, z ≥ z0) покупатель начинает путь ко входу: сразу за краем того, что видит игрок.
+  // Игрок далеко (или перемотка) — сразу у входа, как раньше
+  farZ(x, z0) {
+    if (this.fast || !this.seen(x, z0)) return z0;
+    return Math.min(ROAD.southZ - 10, Math.max(z0, this.pl.z + 25));
+  }
+  // шаг по прямой к точке; true — пришёл
+  walkTo(a, x, z, dt, sp) {
+    const dx = x - a.x, dz = z - a.z, d = Math.hypot(dx, dz);
+    if (d < 0.02) { a.moving = false; return true; }
+    const m = Math.min(d, sp * dt);
+    a.x += (dx / d) * m; a.z += (dz / d) * m;
+    a.face = Math.atan2(dx, dz); a.moving = true;
+    return m >= d;
+  }
+  // ушёл с глаз — пропал; иначе идёт по точкам wp дальше
+  goneStep(c, dt) {
+    if (this.fast || !this.seen(c.x, c.z)) { c.dead = true; return; }
+    const w = c.wp[0];
+    if (!w) { c.dead = true; return; }
+    if (this.walkTo(c, w[0], w[1], dt, TUNE.custSpeed * 1.3)) c.wp.shift();
   }
 
   // ───────── покупатели досок (прилавок) ─────────
+  // Лимит c1Max — как раньше, по тем, кто на лесопилке; идущие по тротуару в него не входят
   c1Step(dt) {
     if (!this.open.z1) return;
     this.c1Timer -= dt;
-    let n = 0;
-    for (const c of this.cust) if (c.kind === 'c1') n++;
-    if (this.c1Timer <= 0 && n < TUNE.c1Max) {
+    let n = 0, far = 0;
+    for (const c of this.cust) if (c.kind === 'c1') { if (c.state === 'far') far++; else if (c.state !== 'gone') n++; }
+    if (this.c1Timer <= 0 && n < TUNE.c1Max && n + far < TUNE.c1Max + 4) {
       this.c1Timer = this.uv('u_cust1') * (0.75 + 0.5 * this.rnd());
-      const c = this.agent('c1', C1_SPAWN[0] + (this.rnd() - 0.5) * 2, C1_SPAWN[1]);
-      c.want = 1 + Math.floor(this.rnd() * 3); c.state = 'in'; c.spot = -1; c.look = Math.floor(this.rnd() * 1000);
+      const x = C1_ENTRY[0] + (this.rnd() - 0.5) * 0.8;
+      const c = this.agent('c1', x, this.farZ(x, C1_ENTRY[1]));
+      c.want = 1 + Math.floor(this.rnd() * 3); c.spot = -1; c.look = Math.floor(this.rnd() * 1000);
+      if (c.z > C1_ENTRY[1] + 0.5) { c.state = 'far'; this.c1q.push(c); } else { c.state = 'in'; n++; }
       this.cust.push(c);
     }
+    // очередь на тротуаре: первый входит, когда на лесопилке есть место, остальные стоят за ним
+    this.c1q = this.c1q.filter((c) => c.state === 'far' && !c.dead);
+    this.c1q.forEach((c, i) => {
+      const at = this.walkTo(c, c.x, C1_ENTRY[1] + i * 1.3, dt, TUNE.custSpeed * 1.3);
+      if (i === 0 && at && n < TUNE.c1Max) { c.state = 'in'; n++; }
+      else if (at) c.face = Math.PI;
+    });
     for (const c of this.cust) if (c.kind === 'c1') this.c1Update(c, dt);
     this.cust = this.cust.filter((c) => !c.dead);
   }
@@ -789,8 +1161,11 @@ class Game {
         if (c.stack.length >= c.want) this.c1Leave(c, true);
         else { c.wait += dt; if (c.wait > 30) this.c1Leave(c, c.stack.length > 0); }
         break;
-      case 'out':
-        if (this.follow(c, dt, sp)) c.dead = true;
+      case 'out':   // дошёл до тротуара — дальше уходит по нему на юг
+        if (this.follow(c, dt, sp)) { c.state = 'gone'; c.wp = [[c.x, ROAD.southZ - 10]]; }
+        break;
+      case 'gone':
+        this.goneStep(c, dt);
         break;
     }
   }
@@ -803,24 +1178,45 @@ class Game {
     }
     if (c.spot >= 0) this.spots[c.spot] = null;
     c.spot = -1; c.state = 'out';
-    this.goTo(c, C1_SPAWN[0] + (this.rnd() - 0.5) * 2, C1_SPAWN[1] + 4);
+    this.goTo(c, C1_EXIT[0] + (this.rnd() - 0.5) * 0.8, C1_EXIT[1]);
   }
 
   // ───────── покупатели магазина ─────────
   cashierPresent() { return this.cashierHere; }
 
+  // Лимит c4Max — как раньше, по тем, кто в магазине; идущие по тротуару и дорожке в него не входят
   c4Step(dt) {
     if (!this.open.z4 || !this.shelvesOn.length) return;
     this.c4Timer -= dt;
-    let n = 0;
-    for (const c of this.cust) if (c.kind === 'c4') n++;
-    if (this.c4Timer <= 0 && n < TUNE.c4Max) {
+    let n = 0, far = 0;
+    for (const c of this.cust) if (c.kind === 'c4') { if (c.state === 'far') far++; else if (c.state !== 'gone') n++; }
+    if (this.c4Timer <= 0 && n < TUNE.c4Max && n + far < TUNE.c4Max + 4) {
       this.c4Timer = this.uv('u_cust4') * (0.75 + 0.5 * this.rnd());
-      const sp = C4_SPAWN[this.rnd() < 0.5 ? 0 : 1];
-      const c = this.agent('c4', sp[0], sp[1]);
+      const e = this.rnd() < 0.5 ? 0 : 1, en = C4_ENTRY[e];
+      const c = this.agent('c4', en[0], en[1]);
       c.want = 1 + Math.floor(this.rnd() * 3); c.tries = 0; c.look = Math.floor(this.rnd() * 1000);
-      this.c4ToShelf(c, this.shelvesOn[Math.floor(this.rnd() * this.shelvesOn.length)]);
+      // полку и место у неё выбираем сразу — тот же порядок случайных чисел, что и раньше
+      c.shelf0 = this.shelvesOn[Math.floor(this.rnd() * this.shelvesOn.length)];
+      c.shelfX = SHELVES[c.shelf0] + (this.rnd() - 0.5) * 2.8;
+      c.entry = e;
+      if (this.seen(en[0], en[1]) && !this.fast) {
+        // идёт по тротуару южной дороги, потом по дорожке к входу
+        const w = ROAD.walk, fz = this.farZ(w, en[1]);
+        c.x = w; c.z = fz; c.wp = [[w, en[1]]];
+        c.state = 'far';
+        this.c4q[e].push(c);
+      } else { this.c4Enter(c); n++; }
       this.cust.push(c);
+    }
+    // очереди на дорожке у входов
+    for (let e = 0; e < 2; e++) {
+      const q = this.c4q[e] = this.c4q[e].filter((c) => c.state === 'far' && !c.dead), en = C4_ENTRY[e];
+      q.forEach((c, i) => {
+        if (c.wp.length) { if (this.walkTo(c, c.wp[0][0], c.wp[0][1], dt, TUNE.custSpeed * 1.3)) c.wp.shift(); return; }
+        const at = this.walkTo(c, en[0] - i * 1.3, en[1], dt, TUNE.custSpeed * 1.3);
+        if (i === 0 && at && n < TUNE.c4Max) { this.c4Enter(c); n++; }
+        else if (at) c.face = Math.PI / 2;
+      });
     }
     for (const c of this.cust) if (c.kind === 'c4') this.c4Update(c, dt);
     // касса обслуживает первого в очереди
@@ -833,17 +1229,27 @@ class Game {
         this.addCash('cash4', v, f.x, f.z);
         this.ev({ t: 'm', v, from: { a: f }, to: { p: 'cash4' } });
         this.queue.shift();
-        f.state = 'out';
-        const ex = C4_SPAWN[f.look % 2];
-        this.goTo(f, ex[0], ex[1]);
+        this.c4Out(f);
       }
     }
     this.cust = this.cust.filter((c) => !c.dead);
   }
 
-  c4ToShelf(c, shelf) {
+  // вошёл в магазин: к заранее выбранной полке (если её за это время убрали — к любой открытой)
+  c4Enter(c) {
+    const shelf = this.shelvesOn.indexOf(c.shelf0) >= 0 ? c.shelf0 : this.shelvesOn[0];
+    this.c4ToShelf(c, shelf, shelf === c.shelf0 ? c.shelfX : SHELVES[shelf]);
+  }
+  // к выходу; оттуда — по дорожке и тротуару, пока не скроется из виду
+  c4Out(c) {
+    c.state = 'out';
+    const ex = C4_ENTRY[c.look % 2];
+    this.goTo(c, ex[0], ex[1]);
+  }
+
+  c4ToShelf(c, shelf, x = null) {
     c.shelf = shelf; c.state = 'toShelf'; c.wait = 0;
-    this.goTo(c, SHELVES[shelf] + (this.rnd() - 0.5) * 2.8, 56);
+    this.goTo(c, x !== null ? x : SHELVES[shelf] + (this.rnd() - 0.5) * 2.8, 56);
   }
 
   c4Update(c, dt) {
@@ -872,7 +1278,7 @@ class Game {
           const other = this.shelvesOn.filter((id) => id !== c.shelf && this.total(id) > 0);
           if (c.stack.length) this.c4Join(c);
           else if (other.length && c.tries < 2) { c.tries++; this.c4ToShelf(c, other[Math.floor(this.rnd() * other.length)]); }
-          else { c.state = 'out'; const ex = C4_SPAWN[c.look % 2]; this.goTo(c, ex[0], ex[1]); }
+          else this.c4Out(c);
         }
         break;
       }
@@ -885,7 +1291,10 @@ class Game {
         break;
       }
       case 'out':
-        if (this.follow(c, dt, sp)) c.dead = true;
+        if (this.follow(c, dt, sp)) { c.state = 'gone'; c.wp = [[ROAD.walk, c.z], [ROAD.walk, ROAD.southZ - 10]]; }
+        break;
+      case 'gone':
+        this.goneStep(c, dt);
         break;
     }
   }

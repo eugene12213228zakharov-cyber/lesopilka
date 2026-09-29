@@ -1,5 +1,5 @@
 // Прогон баланса: бот проходит игру без графики и печатает время по этажам.
-// node tools/balance.js [часов=12] [--lunch] [--quiet]
+// node tools/balance.js [часов=12] [--lunch] [--quiet] [--buys] [--seed=N]
 //   --lunch — играть по 40 минут, между сессиями офлайн по потолку TUNE.offlineCap (как в обед раз в день)
 const vm = require('vm'), fs = require('fs'), path = require('path');
 const SRC = path.join(__dirname, '..', 'src');
@@ -15,7 +15,10 @@ const DT = 0.1;
 
 const g = new Game(null);
 g.silent = true;
+const seedArg = args.find((a) => a.startsWith('--seed='));   // другие случайные числа — чтобы сравнивать по нескольким прогонам
+if (seedArg) g.s.rng.s = +seedArg.slice(7);
 const bot = new Bot(g);
+if (seedArg) bot.rs.s = +seedArg.slice(7) * 7 + 1;
 const started = Date.now();
 let lastSold = 0;
 let lastFloor = 0, nextReport = 1800, lastBuys = 0, lastBuyT = 0, maxGap = 0, gapAt = 0, session = 0, offline = 0;

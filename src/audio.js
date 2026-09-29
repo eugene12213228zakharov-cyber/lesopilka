@@ -39,7 +39,7 @@ class Sfx {
   play(name, k = 0) {
     if (!this.on || !this.ctx) return;
     const now = performance.now();
-    const gap = { pick: 45, drop: 45, pay: 70, cash: 120, chop: 150 }[name] || 0;
+    const gap = { pick: 45, drop: 45, pay: 70, cash: 120, chop: 150, horn: 1500 }[name] || 0;
     if (gap && now - (this.last[name] || 0) < gap) return;
     this.last[name] = now;
     switch (name) {
@@ -51,6 +51,8 @@ class Sfx {
       case 'built': [523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.16, 'triangle', 0.1, 0, i * 0.07)); break;
       case 'floor': [392, 523, 659, 784, 1047, 1319].forEach((f, i) => this.tone(f, 0.22, 'triangle', 0.11, 0, i * 0.08)); break;
       case 'chop': this.tone(180, 0.09, 'sawtooth', 0.06, -60); break;
+      case 'hit': this.tone(110, 0.25, 'square', 0.12, -60); this.tone(70, 0.35, 'sawtooth', 0.1, -30, 0.03); break;
+      case 'horn': this.tone(392, 0.22, 'square', 0.05); this.tone(330, 0.3, 'square', 0.05, 0, 0.26); break;
     }
   }
 
@@ -64,5 +66,8 @@ class Sfx {
     else if (e.t === 'built') this.play('built');
     else if (e.t === 'floor' || e.t === 'zone' || e.t === 'win') this.play('floor');
     else if (e.t === 'fell') this.play('chop');
+    else if (e.t === 'hit') this.play('hit');
+    else if (e.t === 'hitW' && dist(e.x, e.z, g.pl.x, g.pl.z) < 30) this.play('hit');
+    else if (e.t === 'horn' && dist(e.x, e.z, g.pl.x, g.pl.z) < 30) this.play('horn');
   }
 }

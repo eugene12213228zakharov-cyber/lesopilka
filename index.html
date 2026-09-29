@@ -138,6 +138,15 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
 #modal .small { font-size: 13px; color: var(--muted); }
 #modal button { border: 0; border-radius: 12px; padding: 10px 18px; font-weight: 900; background: var(--accent); color: var(--accent-ink); margin-top: 8px; }
 #modal textarea { width: 100%; height: 110px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--ink); font-family: ui-monospace, Consolas, monospace; font-size: 11px; padding: 8px; user-select: text; }
+/* окно «Идея или баг» */
+#modal .fb { text-align: left; }
+#modal .fb textarea { height: 120px; font-family: inherit; font-size: 14px; resize: vertical; }
+#modal .fb input[type=text], #modal .fb input:not([type]) { width: 100%; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; font-size: 14px; padding: 8px; margin-top: 6px; user-select: text; }
+#modal .fbk { display: flex; gap: 6px; margin: 6px 0 8px; }
+#modal .fbk button { flex: 1; margin: 0; background: var(--line); color: var(--ink); padding: 8px 6px; font-size: 13px; }
+#modal .fbk button.on { background: var(--accent); color: var(--accent-ink); }
+#modal button.ghost { background: var(--line); color: var(--ink); }
+#modal .fb .chk { font-size: 12px; color: var(--muted); }
 
 #joy { position: fixed; width: 110px; height: 110px; margin: -55px 0 0 -55px; border-radius: 50%; background: rgba(255,255,255,0.18); border: 3px solid rgba(255,255,255,0.55); pointer-events: none; }
 #joy.hidden { display: none; }
@@ -151,6 +160,7 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
   #goal { top: auto; bottom: 60px; max-width: calc(100vw - 32px); font-size: 13px; }
   #btns { top: auto; bottom: 14px; right: 50%; transform: translateX(50%); max-width: none; flex-wrap: nowrap; }
   #btns button { padding: 8px 10px; font-size: 13px; }
+  #bFb { display: none; }   /* на телефоне — в Меню, иначе кнопки не влезают */
   kbd { display: none; }
   #carry { bottom: auto; top: 150px; }
   #panel { left: 8px; right: 8px; width: auto; top: 8px; bottom: 70px; }
@@ -169,6 +179,7 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
     <button id="bUpg">⬆ Улучшения<span id="upgBadge" class="badge" style="display:none"></span><kbd>U</kbd></button>
     <button id="bTower">🏢 Небоскрёб<kbd>B</kbd></button>
     <button id="bWork">👷 Рабочие<kbd>R</kbd></button>
+    <button id="bFb" title="Идея или баг — напиши разработчику">💬</button>
     <button id="bMenu" title="Меню">⚙</button>
   </div>
   <div id="carry" style="display:none"></div>
@@ -181,9 +192,14 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
 
 <script>
   // Номер сборки: меняется при каждом обновлении, чтобы браузер не смешал старые и новые файлы
-  window.LESO_BUILD = '2026.09.29-4';
+  window.LESO_BUILD = '2026.09.29-5';
   // Тестовая сборка: адрес …/lesopilka-test/ или локальный сервер — своё сохранение и админка F2
   window.LESO_TEST = /lesopilka-test/.test(location.pathname) || ['localhost', '127.0.0.1'].indexOf(location.hostname) >= 0;
+  // последние ошибки — прикладываются к сообщению о баге (кнопка «💬»)
+  window.__errs = [];
+  const keepErr = (t) => { window.__errs.push(new Date().toTimeString().slice(0, 8) + ' ' + String(t).slice(0, 300)); if (window.__errs.length > 8) window.__errs.shift(); };
+  window.addEventListener('error', (e) => keepErr((e.message || 'ошибка') + (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : '')));
+  window.addEventListener('unhandledrejection', (e) => keepErr('promise: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)));
   // если three.js не загрузился с CDN — скажем об этом, а не будем молча висеть
   setTimeout(function () {
     var l = document.getElementById('loading');

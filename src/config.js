@@ -68,7 +68,9 @@ addPile('counter', { zone: 'z1', x: -15.2, z: 16, w: 2.4, d: 4, mode: 'drop', ac
 addPile('cash1', { zone: 'z1', x: -15.2, z: 21.4, w: 2.4, d: 2, money: true });
 PROPS.push({ id: 'stall', type: 'stall', zone: 'z1', x: -12, z: 16, w: 1.6, d: 6 });
 const C1_SPOTS = [[-10.1, 14], [-10.1, 16], [-10.1, 18]];
-const C1_SPAWN = [1.5, 30];
+// покупатели досок приходят по тротуару вдоль южной дороги: здесь входят на лесопилку и отсюда уходят
+const C1_ENTRY = [-4, 30];
+const C1_EXIT = [-4, 34];
 
 // ── центр: небоскрёб ──
 addPile('site', { zone: 'c', x: 0, z: -12, w: 6, d: 2.4, mode: 'drop', site: true, name: 'Стройка' });
@@ -119,7 +121,8 @@ for (const id in SHELVES) {
 PROPS.push({ id: 'desk', type: 'desk', zone: 'z4', x: 28, z: 64, w: 4, d: 1.2 });
 const CASHIER = { x: 28, z: 62, w: 2.4, d: 1.6 };
 const QUEUE = [[27.4, 66], [27.4, 67.4], [27.4, 68.8], [27.4, 70.2], [29, 70.9], [30.6, 70.9], [32.2, 70.9], [33.8, 70.9]];
-const C4_SPAWN = [[20, 77], [36, 77]];
+// входы в магазин с дорожки вдоль южного края; к дорожке покупатели идут по тротуару южной дороги
+const C4_ENTRY = [[20, 77], [36, 77]];
 addPile('cash4', { zone: 'z4', x: 33.4, z: 62, w: 2.4, d: 1.8, money: true });
 
 // ── z5 Бумажный цех ──
@@ -142,6 +145,32 @@ addPile('cash6', { zone: 'z6', x: 70, z: 36, w: 2.4, d: 2, money: true, pad: 'p_
 PROPS.push({ id: 'pcrane', type: 'pcrane', zone: 'z6', pad: 'p_crane', x: 77, z: 22.5, w: 2.4, d: 2.4 });
 const PIER = { x0: 80, z0: 26, x1: 88, z1: 32 };
 const SHIP_DOCK = [93, 29];
+
+// ── дороги, переходы, светофор ──
+// Главная дорога — вдоль X (|z| ≤ 3): на западе уходит в тоннель, у моря поворачивает на север — береговая дорога
+// в северный тоннель. От перекрёстка в центре — южная дорога (|x| ≤ 3). Движение правостороннее, полосы ±1.5.
+const ROAD = {
+  half: 3, lane: 1.5, walk: 4, walkW: 1.6,        // полуширина, середина полосы, середина и ширина тротуара
+  westX: -150, coastX: 73, southZ: 190,
+  tunnelW: { x: -91, x1: -121, z0: -15, z1: 15 },  // западный тоннель: портал и холм над ним
+  tunnelN: { z: -17, z1: -45, x0: 62, x1: 84 },    // северный: портал и холм (холм — стена)
+};
+// Переходы: across 'z' — через главную (идут вдоль Z), 'x' — через южную; signal — светофор перехода, без него —
+// «зебра»: пешеход пропускает подъезжающую машину, машина — пешехода на переходе.
+// Рабочие переходят дорогу только здесь (дороги для них непроходимы).
+const CROSSINGS = [
+  { x: -26, z: 0, across: 'z' }, { x: -4.6, z: 0, across: 'z', signal: 'c' },
+  { x: 4.6, z: 0, across: 'z', signal: 'c' }, { x: 28, z: 0, across: 'z' },
+  { x: 0, z: 6.5, across: 'x', signal: 'c' },
+  ...[15, 25, 33, 41, 50, 58, 66].map((z) => ({ x: 0, z, across: 'x' })),
+];
+// Светофор с датчиком машин на перекрёстке: пешеходам зелёный, пока к стоп-линии не подъедет машина; тогда — машинам,
+// пока не проедут. stopE / stopW — стоп-линии для едущих на восток / запад, stopN — выезд с южной дороги
+const LIGHTS = [
+  { id: 'c', x: 0, stopE: -6.7, stopW: 6.7, stopN: 8.6 },
+];
+// у пешеходов приоритет: зелёный не короче walkMin, машинам — коротко, пока проезжают переход (машины 'out' никуда не спешат)
+const LIGHT = { walkMin: 9, walkBlink: 1.5, allRed: 0.5, carMin: 2, carMax: 8, carYellow: 1.2, detect: 25 };
 
 // ── мусорные контейнеры: выкинуть лишнее из рук ──
 addPile('trash1', { zone: 'z1', x: -8.8, z: 35.6, w: 2, d: 2, mode: 'drop', trash: true, name: 'Мусор' });
@@ -338,6 +367,12 @@ const FLOORS = [
 ];
 const FLOOR_BONUS = 1.1;    // ×1.1 к ценам продажи за каждый построенный этаж
 
+// ───────── Идеи и баги (кнопка «💬») ─────────
+// repo — куда открывать задачу на GitHub (Issues репозитория общей версии).
+// form — если подключить Google-форму, отзывы уходят прямо из игры, без аккаунта GitHub:
+//   { url: 'https://docs.google.com/forms/d/e/<id>/formResponse', kind: 'entry.…', text: 'entry.…', name: 'entry.…', tech: 'entry.…' }
+const FEEDBACK = { repo: 'eugene12213228zakharov-cyber/lesopilka', form: null };
+
 // ───────── Прочие константы ─────────
 const TUNE = {
   playerR: 0.45,
@@ -347,10 +382,11 @@ const TUNE = {
   chopRadius: 1.3,
   plantTime: 0.5,
   truckSpeed: 14,
-  logTruckLane: -1.5,
-  optTruckLane: 1.5,
+  truckAcc: 5,          // разгон и торможение машин, м/с²; маршруты — TRUCK_PATHS в sim.js
+  truckBrake: 10,
   logTruckStopX: -40,
   optTruckStopX: 47.8,
+  looseLife: 60,        // сколько лежит на земле то, что выронил игрок, когда его сбила машина
   optTruckLoad: 40,
   optShare: 0.7,        // оптовик платит 70% розничной цены
   c1Max: 10,

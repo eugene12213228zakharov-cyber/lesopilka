@@ -177,7 +177,7 @@ function lkNoise2(seed) {
   };
 }
 
-// kind: grass | dirt | forest | concrete | tiles | port | gravel | asphalt. Возвращает текстуру и размер плитки в метрах
+// kind: grass | dirt | forest | concrete | tiles | port | gravel | asphalt | walk. Возвращает текстуру и размер плитки в метрах
 function groundTexture(kind) {
   if (LOOK_TEX[kind]) return LOOK_TEX[kind];
   const cfg = {
@@ -189,6 +189,7 @@ function groundTexture(kind) {
     port:     { px: 512, m: 12, base: [178, 178, 172], seed: 16, slab: 6 },
     gravel:   { px: 512, m: 6,  base: [190, 178, 152], seed: 17 },
     asphalt:  { px: 512, m: 8,  base: [92, 96, 101],   seed: 18 },
+    walk:     { px: 256, m: 2,  base: [176, 173, 166], seed: 19, slab: 0.5 },   // тротуарная плитка
   }[kind];
   const W = cfg.px, cv = document.createElement('canvas');
   cv.width = cv.height = W;

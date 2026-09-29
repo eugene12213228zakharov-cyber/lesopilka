@@ -5,6 +5,7 @@
 class Bot {
   constructor(g) {
     this.g = g;
+    g.soft = true;   // машины бота пропускают: прогон меряет экономику, а не то, как он переходит дорогу
     this.task = null;
     this.path = null;
     this.pi = 0;
@@ -212,6 +213,11 @@ class Bot {
       const last = this.pi === this.path.length - 1;
       if (d < (last ? 0.2 : 0.45)) { this.pi++; continue; }
       const k = last && d < 1 ? Math.max(0.25, d) : 1;
+      // по правилам: на переход со светофором — только на зелёный
+      if (g.crossWait(pl.x, pl.z, pl.x + ((wx - pl.x) / d) * 0.35, pl.z + ((wz - pl.z) / d) * 0.35)) {
+        g.input.x = 0; g.input.z = 0; this.stuckT = 0; this.lastPos = [pl.x, pl.z];
+        return false;
+      }
       g.input.x = ((wx - pl.x) / d) * k;
       g.input.z = ((wz - pl.z) / d) * k;
       this.stuckT += dt;

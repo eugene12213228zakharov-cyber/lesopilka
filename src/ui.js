@@ -16,6 +16,7 @@ class UI {
     $('bTower').onclick = () => this.toggle('tower');
     $('bWork').onclick = () => this.toggle('work');
     $('bMenu').onclick = () => this.toggle('menu');
+    $('bFb').onclick = () => this.feedback();
     $('pClose').onclick = () => this.close();
     $('pBody').addEventListener('click', (e) => this.onPanelClick(e));
     $('modal').addEventListener('click', (e) => { if (e.target.id === 'modal' || e.target.dataset.close !== undefined) this.hideModal(); });
@@ -55,6 +56,17 @@ class UI {
       if (this.panel === 'upg') this.refresh();
     } else if (e.t === 'win') {
       this.showWin();
+    } else if (e.t === 'hit') {
+      this.toast(e.n ? `🚚 Тебя сбила машина — рассыпалось ${e.n} ${plural(e.n, 'предмет', 'предмета', 'предметов')}. Подбери, пока не растащили!`
+        : '🚚 Осторожно, машина! Переходи на зелёный', 'bad');
+    } else if (e.t === 'hitW') {
+      // рабочий перебегал дорогу где попало; не чаще раза в 8 с, чтобы не завалить сообщениями
+      const now = performance.now();
+      if (now - (this.hitWT || 0) > 8000) {
+        this.hitWT = now;
+        const w = e.w, nm = w.route ? ROUTES[w.route].name : ROLE_NAMES[w.role];
+        this.toast(`🚚 Сбили: ${nm} перебегал дорогу не по переходу` + (e.n ? ` — рассыпалось ${e.n} ${plural(e.n, 'предмет', 'предмета', 'предметов')}, можно подобрать` : ''), 'bad');
+      }
     }
   }
 
@@ -151,10 +163,12 @@ class UI {
     } else if (this.panel === 'menu') {
       const snd = this.audio.on;
       h += `<button class="wide" data-act="sound">${snd ? '🔊 Звук включён' : '🔇 Звук выключен'}</button>`;
+      h += '<button class="wide" data-act="feedback">💬 Предложить идею или сообщить о баге</button>';
       h += '<div class="sec">Управление</div><div class="note">Зажми мышь и тяни — человечек бежит в ту сторону (как джойстик на телефоне). ' +
         'Или WASD / стрелки. Колёсико — приблизить. Встал на площадку — предметы и деньги перетекают сами.<br>' +
         'U — улучшения, B — небоскрёб, R — рабочие, M — звук, Esc — закрыть.</div>';
-      h += `<div class="sec">Статистика</div><div class="note">В игре: ${fmtTime(s.playT)}. Заработано всего: ${fmtMoney(s.earned)}. Покупок: ${s.stats.buys}.</div>`;
+      h += `<div class="sec">Статистика</div><div class="note">В игре: ${fmtTime(s.playT)}. Заработано всего: ${fmtMoney(s.earned)}. Покупок: ${s.stats.buys}.` +
+        `<br>Сбивали машиной: тебя — ${s.stats.hitMe || 0}, рабочих — ${s.stats.hitW || 0}.</div>`;
       h += '<div class="sec">Сохранение</div><div class="note small">Игра сохраняется сама каждые 10 секунд в браузере. Если чистишь браузер или хочешь перенести на другой комп — сохрани код.</div>';
       h += '<button class="wide" data-act="export">📋 Скопировать код сохранения</button>';
       h += '<button class="wide" data-act="import">📥 Загрузить из кода</button>';
@@ -211,6 +225,7 @@ class UI {
     else if (t.dataset.w !== undefined) { const w = g.workers[+t.dataset.w]; w.on = !w.on; this.refresh(); }
     else if (t.dataset.prio !== undefined) { g.s.sitePriority = t.checked; }
     else if (t.dataset.act === 'sound') { this.audio.toggle(); this.render(); }
+    else if (t.dataset.act === 'feedback') this.feedback();
     else if (t.dataset.act === 'export') this.exportSave();
     else if (t.dataset.act === 'import') this.importSave();
     else if (t.dataset.act === 'reset') this.resetGame();
@@ -243,6 +258,93 @@ class UI {
     this.modal(`<h2>🏙 Небоскрёб построен!</h2><p>Все ${FLOORS.length} этажей готовы.</p>` +
       `<p>Время в игре: <b>${fmtTime(s.playT)}</b><br>Заработано: <b>${fmtMoney(s.earned)}</b><br>Покупок: <b>${s.stats.buys}</b></p>` +
       '<p class="small">Можно продолжать: цеха работают, корабли приходят.</p><button data-close>Играть дальше</button>');
+  }
+
+  // ───────── идеи и баги ─────────
+  // Окно отзыва: тип, текст, имя, данные об игре. Уходит в GitHub Issues репозитория FEEDBACK.repo (открывается
+  // готовая страница — нажать «Create»), а если подключена Google-форма (FEEDBACK.form) — прямо из игры.
+  // Черновик хранится в браузере, пока не отправлен.
+  fbDraft(v) {
+    const key = 'lesopilka_feedback';
+    try {
+      if (v === undefined) return Object.assign({ kind: 'bug', text: '', name: '', tech: true }, JSON.parse(localStorage.getItem(key) || '{}'));
+      if (v) localStorage.setItem(key, JSON.stringify(v)); else localStorage.removeItem(key);
+    } catch (e) { /* хранилище недоступно — черновик не запомнится */ }
+    return { kind: 'bug', text: '', name: '', tech: true };
+  }
+
+  techInfo() {
+    const g = this.g, s = g.s, errs = window.__errs || [];
+    return [
+      `Сборка: ${window.LESO_BUILD}${window.LESO_TEST ? ' (тест)' : ''}`,
+      `Экран: ${innerWidth}×${innerHeight}, масштаб ${devicePixelRatio}`,
+      `Браузер: ${navigator.userAgent}`,
+      `Этаж ${s.floor}/${FLOORS.length}, в игре ${fmtTime(s.playT)}, деньги ${fmtMoney(s.money)}, покупок ${s.stats.buys}, рабочих ${g.workers.length}`,
+      `Открыто: ${ZONES.filter((z) => g.open[z.id]).map((z) => z.name).join(', ')}`,
+      errs.length ? 'Ошибки:\n' + errs.join('\n') : 'Ошибок в консоли нет',
+    ].join('\n');
+  }
+
+  feedback() {
+    const d = this.fbDraft();
+    const kinds = [['bug', '🐞 Баг'], ['idea', '💡 Идея'], ['other', '💬 Другое']];
+    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    this.modal('<h2>Идея или баг</h2><div class="fb">' +
+      '<p class="small">Всё, что заметил или хочешь в игре, — сюда. Попадёт в общий список, ничего не потеряется.</p>' +
+      `<div class="fbk">${kinds.map(([k, t]) => `<button data-fbk="${k}"${d.kind === k ? ' class="on"' : ''}>${t}</button>`).join('')}</div>` +
+      `<textarea id="fbText" placeholder="Что случилось или что предлагаешь? Для бага — что делал перед этим">${esc(d.text)}</textarea>` +
+      `<input id="fbName" maxlength="40" placeholder="Как тебя зовут (необязательно)" value="${esc(d.name)}">` +
+      `<label class="chk"><input type="checkbox" id="fbTech"${d.tech ? ' checked' : ''}> Приложить данные об игре: версия, браузер, этаж, ошибки</label>` +
+      '<button id="fbSend">Отправить</button> <button id="fbCopy" class="ghost">Скопировать текст</button> <button data-close class="ghost">Закрыть</button>' +
+      `<p class="small" id="fbNote">${FEEDBACK.form ? '' : 'Откроется страница GitHub с готовым текстом — там нажми «Create» (нужен вход в GitHub). Нет аккаунта — жми «Скопировать» и пришли текст разработчику.'}</p>` +
+      '</div>');
+    const box = $('modalBox');
+    const read = () => ({
+      kind: (box.querySelector('[data-fbk].on') || {}).dataset?.fbk || 'bug',
+      text: $('fbText').value, name: $('fbName').value, tech: $('fbTech').checked,
+    });
+    const save = () => this.fbDraft(read());
+    box.querySelectorAll('[data-fbk]').forEach((b) => {
+      b.onclick = () => { box.querySelectorAll('[data-fbk]').forEach((x) => x.classList.toggle('on', x === b)); save(); };
+    });
+    $('fbText').oninput = save; $('fbName').oninput = save; $('fbTech').onchange = save;
+    const compose = () => {
+      const v = read(), kind = kinds.find((k) => k[0] === v.kind)[1];
+      const text = v.text.trim();
+      const title = `[${kind.slice(3)}] ${text.split('\n')[0].slice(0, 70) || 'без описания'}`;
+      const body = `**Тип:** ${kind}` + (v.name.trim() ? `\n**От:** ${v.name.trim()}` : '') + `\n\n${text || '—'}` +
+        (v.tech ? `\n\n<details><summary>Данные об игре</summary>\n\n\`\`\`\n${this.techInfo()}\n\`\`\`\n</details>` : '');
+      return { v, title, body, plain: `${title}\n\n${text}` + (v.name.trim() ? `\n— ${v.name.trim()}` : '') + (v.tech ? `\n\n${this.techInfo()}` : '') };
+    };
+    const copy = (t) => {
+      try { navigator.clipboard.writeText(t); } catch (e) { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+    };
+    $('fbCopy').onclick = () => { copy(compose().plain); this.toast('📋 Текст скопирован — пришли его разработчику'); };
+    $('fbSend').onclick = () => {
+      const c = compose();
+      if (!c.v.text.trim()) { this.toast('Напиши, что случилось или что предлагаешь', 'bad'); $('fbText').focus(); return; }
+      const F = FEEDBACK.form;
+      if (F) {
+        // Google-форма: отправка без аккаунта; ответ форма не показывает (no-cors) — считаем, что дошло
+        const data = new URLSearchParams();
+        data.append(F.kind, c.v.kind === 'bug' ? 'Баг' : c.v.kind === 'idea' ? 'Идея' : 'Другое');
+        data.append(F.text, c.v.text.trim());
+        if (F.name) data.append(F.name, c.v.name.trim());
+        if (F.tech && c.v.tech) data.append(F.tech, this.techInfo());
+        fetch(F.url, { method: 'POST', mode: 'no-cors', body: data })
+          .then(() => { this.fbDraft(null); this.hideModal(); this.toast('✅ Спасибо! Записали', 'big'); })
+          .catch(() => this.toast('Не получилось отправить — проверь интернет или нажми «Скопировать»', 'bad'));
+        return;
+      }
+      const url = `https://github.com/${FEEDBACK.repo}/issues/new?title=${encodeURIComponent(c.title)}&body=${encodeURIComponent(c.body)}` +
+        `&labels=${c.v.kind === 'bug' ? 'bug' : c.v.kind === 'idea' ? 'enhancement' : ''}`;
+      copy(c.plain);
+      window.open(url, '_blank', 'noopener');
+      this.fbDraft(null);
+      this.hideModal();
+      this.toast('Открыл GitHub — нажми там «Create». Текст на всякий случай скопирован', 'big');
+    };
+    setTimeout(() => $('fbText') && $('fbText').focus(), 50);
   }
 
   exportSave() {

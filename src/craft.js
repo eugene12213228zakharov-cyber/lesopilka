@@ -1078,6 +1078,156 @@ function ownLogTruck() {
   return g;
 }
 
+// ───────── дороги: светофоры, тоннели ─────────
+// Лампы — отдельные меши: материалы им назначает render.js и переключает по фазе светофора.
+const LAMP_GEO = {};
+function lampGeo(kind) {
+  if (!LAMP_GEO[kind]) {
+    const k = new Kit(1);
+    if (kind === 'car') k.cyl(0xffffff, 0, 0, 0, 0.105, 0.03, { axis: 'z', n: 16, b: 0.006 });
+    else k.box(0xffffff, 0, 0, 0, 0.2, 0.2, 0.02, { b: 0.004 });
+    LAMP_GEO[kind] = k.geo();
+    LAMP_GEO[kind].setAttribute('uv', new THREE.BufferAttribute(new Float32Array(LAMP_GEO[kind].attributes.position.count * 2), 2));
+    // для пешеходных ламп — развёртка на лицевую грань (картинка человечка)
+    if (kind === 'ped') {
+      const p = LAMP_GEO[kind].attributes.position, uv = LAMP_GEO[kind].attributes.uv;
+      for (let i = 0; i < p.count; i++) uv.setXY(i, p.getX(i) / 0.2 + 0.5, p.getY(i) / 0.2 + 0.5);
+    }
+  }
+  return LAMP_GEO[kind];
+}
+// столб светофора высотой h с бетонным основанием
+function ownLightPole(h = 3.3) {
+  const k = new Kit(301);
+  k.cyl(0x9aa0a4, 0, 0.06, 0, 0.2, 0.12, { n: 10, surf: SURF.concrete });
+  k.cyl(0x6f767c, 0, h / 2, 0, 0.06, h, { n: 8, surf: SURF.metal, b: 0.01 });
+  k.cyl(0x6f767c, 0, h + 0.03, 0, 0.075, 0.06, { n: 8, surf: SURF.metal });
+  return k.mesh({}, true);
+}
+// головка для машин: три лампы на экране с козырьками, лицом к +Z; { g, lamps: [красная, жёлтая, зелёная] }
+function ownCarLightHead() {
+  const g = new THREE.Group(), k = new Kit(302);
+  k.box(0x2b2f33, 0, 0, 0, 0.34, 1.0, 0.26, { surf: SURF.metal, b: 0.03 });
+  k.box(0x1d2023, 0, 0, -0.14, 0.5, 1.18, 0.02, { surf: SURF.metal, b: 0.005 });
+  for (const s of [-1, 1]) k.box(0xe8e4d8, s * 0.245, 0, -0.145, 0.02, 1.18, 0.022, { b: 0 });
+  for (const y of [0.3, 0, -0.3]) k.prism(0x2b2f33, 0, y + 0.13, 0.19, [[-0.14, 0], [0.14, 0], [0.14, 0.03], [-0.14, 0.03]], 0.14, { surf: SURF.metal });
+  g.add(k.mesh({}, true));
+  const lamps = [0.3, 0, -0.3].map((y) => { const m = new THREE.Mesh(lampGeo('car')); m.position.set(0, y, 0.135); g.add(m); return m; });
+  return { g, lamps };
+}
+// головка для пешеходов: сверху красный (стоит), снизу зелёный (идёт), лицом к +Z
+function ownPedLightHead() {
+  const g = new THREE.Group(), k = new Kit(303);
+  k.box(0x2b2f33, 0, 0, 0, 0.3, 0.6, 0.22, { surf: SURF.metal, b: 0.025 });
+  for (const y of [0.15, -0.15]) k.prism(0x2b2f33, 0, y + 0.12, 0.16, [[-0.13, 0], [0.13, 0], [0.13, 0.025], [-0.13, 0.025]], 0.1, { surf: SURF.metal });
+  g.add(k.mesh({}, true));
+  const lamps = [0.15, -0.15].map((y) => { const m = new THREE.Mesh(lampGeo('ped')); m.position.set(0, y, 0.115); g.add(m); return m; });
+  return { g, lamps };
+}
+// картинка человечка для пешеходных ламп: go — идёт, иначе стоит
+function pedIconTexture(go) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const x = cv.getContext('2d');
+  x.fillStyle = '#000'; x.fillRect(0, 0, 64, 64);
+  x.fillStyle = '#fff'; x.strokeStyle = '#fff'; x.lineCap = 'round'; x.lineWidth = 7;
+  x.beginPath(); x.arc(32, 13, 6.5, 0, Math.PI * 2); x.fill();
+  const line = (a, b, c, d) => { x.beginPath(); x.moveTo(a, b); x.lineTo(c, d); x.stroke(); };
+  if (go) { line(31, 24, 28, 40); line(28, 40, 20, 56); line(28, 40, 38, 55); line(30, 27, 20, 36); line(30, 27, 41, 33); }
+  else { line(32, 23, 32, 42); line(32, 42, 26, 58); line(32, 42, 38, 58); line(32, 26, 23, 40); line(32, 26, 41, 40); }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// знак «Пешеходный переход» на столбике, лицом к +Z
+let CROSS_SIGN_TEX = null;
+function ownCrossSign() {
+  if (!CROSS_SIGN_TEX) {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+    const x = cv.getContext('2d');
+    x.fillStyle = '#f4f4f4'; x.fillRect(0, 0, 128, 128);
+    x.fillStyle = '#1f5fb4'; x.fillRect(6, 6, 116, 116);
+    x.fillStyle = '#fff'; x.beginPath(); x.moveTo(64, 16); x.lineTo(114, 106); x.lineTo(14, 106); x.closePath(); x.fill();
+    x.fillStyle = '#111'; for (let i = 0; i < 4; i++) x.fillRect(30 + i * 18, 94, 10, 7);
+    x.strokeStyle = '#111'; x.lineWidth = 6; x.lineCap = 'round';
+    x.beginPath(); x.arc(64, 42, 6, 0, Math.PI * 2); x.fillStyle = '#111'; x.fill();
+    const l = (a, b, c, d) => { x.beginPath(); x.moveTo(a, b); x.lineTo(c, d); x.stroke(); };
+    l(63, 52, 60, 70); l(60, 70, 52, 86); l(60, 70, 70, 86); l(62, 56, 52, 64); l(62, 56, 73, 62);
+    CROSS_SIGN_TEX = new THREE.CanvasTexture(cv); CROSS_SIGN_TEX.colorSpace = THREE.SRGBColorSpace; CROSS_SIGN_TEX.anisotropy = 4;
+  }
+  const g = new THREE.Group(), k = new Kit(321);
+  k.cyl(0x8a9096, 0, 1.2, 0, 0.04, 2.4, { n: 8, surf: SURF.metal });
+  k.box(0x9aa0a5, 0, 2.18, -0.02, 0.6, 0.6, 0.025, { surf: SURF.metal, b: 0.006 });
+  g.add(k.mesh({}, true));
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(0.58, 0.58), plainMaterial({ map: CROSS_SIGN_TEX, roughness: 0.6 }));
+  face.position.set(0, 2.18, -0.005);
+  g.add(face);
+  return g;
+}
+
+// портал тоннеля лицом к +Z: бетонная стена с проёмом, крылья, тёмная глубина, фонари над въездом
+function ownTunnelPortal() {
+  const k = new Kit(311), W = 14, Hh = 6.5, ow = 7.6, oh = 4.9, t = 0.9, con = 0xb3ada2;
+  for (const s of [-1, 1]) {
+    k.box(con, s * (ow / 2 + (W - ow) / 4), Hh / 2, 0, (W - ow) / 2, Hh, t, { surf: SURF.concrete, b: 0.05 });
+    // крылья — подпорные стенки по бокам, уходят вглубь холма
+    k.box(con, s * (W / 2 + 0.3), Hh / 2 - 0.4, -1.6, 0.6, Hh - 0.8, 3.2, { surf: SURF.concrete, b: 0.05 });
+    k.box(con, s * (W / 2 + 0.3), 1.7, 1.2, 0.6, 3.4, 2.4, { surf: SURF.concrete, b: 0.05 });
+  }
+  k.box(con, 0, oh + (Hh - oh) / 2, 0, ow, Hh - oh, t, { surf: SURF.concrete, b: 0.05 });
+  k.box(0xa39d92, 0, Hh + 0.18, 0.1, W + 0.8, 0.36, t + 0.5, { surf: SURF.concrete, b: 0.06 });
+  kHazard(k, 0, oh + 0.12, t / 2 + 0.02, ow, 'x', 0.02, 0.24, 0.35);
+  // глубина проёма: тёмный объём — машина, въезжая, пропадает в темноте
+  k.box(0x0c0e10, 0, oh / 2, -3.2, ow - 0.02, oh - 0.02, 6.4, { b: 0 });
+  const g = new THREE.Group();
+  g.add(k.mesh({ ao: [0.6, 0.6] }));
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xffd98a, toneMapped: false });
+  for (const s of [-1, 1]) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.08), lampMat);
+    m.position.set(s * 2.4, oh + 0.55, t / 2 + 0.05);
+    g.add(m);
+  }
+  return g;
+}
+
+// холм над тоннелем: портал в z=0, холм уходит в −Z на d, ширина w, высота h. Над проёмом — плато
+// высотой портала, по бокам склон начинается от земли (без обрыва)
+function ownHillGeo(w, d, h, seed) {
+  const nx = 26, nz = 20, n = lkNoise2(seed);
+  const sm = (a, b, t) => { t = clamp((t - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  const H = (x, z) => {
+    const v = x / (w / 2), u = -z / d;
+    if (u < 0) return 0;
+    // купол-эллипс с вершиной посередине глубины, края пологие
+    const r = Math.sqrt(v * v + Math.pow((u - 0.52) / 0.55, 2));
+    let y = r < 1 ? h * Math.pow(1 - r * r, 1.4) * (0.84 + 0.32 * n(x * 0.21 + 3, z * 0.21 + 7)) : 0;
+    // вал над порталом высотой стены; вбок и вглубь сходит в купол, у самого портала сбоку — от земли
+    let p = 6.6 * (1 - sm(6, 11.5, Math.abs(x))) * (1 - sm(0.12, 0.45, u));
+    if (Math.abs(x) > 7) p *= sm(0, 0.12, u);
+    return Math.max(y, p);
+  };
+  const pos = [], col = [];
+  const grass = new THREE.Color(0x6c9446), dry = new THREE.Color(0x8b8a4f), soil = new THREE.Color(0x7d6a4c), c = new THREE.Color();
+  const P = (i, j) => { const x = -w / 2 + (w * i) / nx, z = -(d * j) / nz; return [x, H(x, z), z]; };
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+    const a = P(i, j), b = P(i + 1, j), cc = P(i + 1, j + 1), dd = P(i, j + 1);
+    for (const tri of [[a, dd, cc], [a, cc, b]]) {
+      const [p0, p1, p2] = tri;
+      _ka.set(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]); _kb.set(p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]);
+      _kn.crossVectors(_ka, _kb).normalize();
+      if (_kn.y < 0) { tri.reverse(); _kn.negate(); }
+      const steep = 1 - _kn.y, hy = (p0[1] + p1[1] + p2[1]) / 3;
+      c.copy(grass).lerp(dry, clamp(n(p0[0] * 0.5, p0[2] * 0.5) * 0.9, 0, 1) * 0.5).lerp(soil, clamp((steep - 0.35) * 2.2, 0, 1));
+      c.multiplyScalar(0.9 + 0.1 * clamp(hy / h, 0, 1));
+      for (const p of tri) { pos.push(p[0], p[1], p[2]); col.push(c.r, c.g, c.b); }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
 // ───────── список своих моделей ─────────
 // items — предметы (геометрия для InstancedMesh), st — станки, props — постройки ({ g, anim })
 const OWN = {

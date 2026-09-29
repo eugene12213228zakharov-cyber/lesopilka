@@ -170,7 +170,7 @@ class View {
 
   // трава вокруг: большой лоскут, пятна крупнее плитки текстуры — чтобы не было видно повторов
   grassField() {
-    const W = 380, D = 280, geo = new THREE.PlaneGeometry(W, D, 95, 70);
+    const W = 380, D = 340, geo = new THREE.PlaneGeometry(W, D, 95, 85);
     const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
     const n1 = lkNoise2(5), n2 = lkNoise2(6), c = new THREE.Color(), a = new THREE.Color(0xc9dca6), b = new THREE.Color(0xfff1c4);
     for (let i = 0; i < pos.count; i++) {
@@ -185,9 +185,130 @@ class View {
     tex.repeat.set(W / gt.m, D / gt.m);
     const m = new THREE.Mesh(geo, plainMaterial({ map: tex, vertexColors: true, roughness: 1 }));
     m.rotation.x = -Math.PI / 2;
-    m.position.set(30, 0, 20);
+    m.position.set(30, 0, 40);
     m.receiveShadow = true;
     return m;
+  }
+
+  // ───────── дороги ─────────
+  // Главная (вдоль X, из западного тоннеля), береговая (на север, в северный тоннель), южная; тротуары, дорожка к
+  // магазину, переходы, стоп-линии, светофоры, бордюры. Раскладка — ROAD / LIGHT / CROSSINGS в config.js
+  buildRoads(curb) {
+    const sc = this.scene, R = ROAD, h = R.half, cx = R.coastX, tw = R.tunnelW, tn = R.tunnelN;
+    const w1 = R.walk + R.walkW / 2;
+    sc.add(groundPatch('asphalt', R.westX, -h, cx + h, h, 0.016));
+    sc.add(groundPatch('asphalt', cx - h, tn.z1 + 4, cx + h, -h, 0.016));
+    sc.add(groundPatch('asphalt', -h, h, h, R.southZ, 0.016));
+    // тротуары: вдоль главной с двух сторон, вдоль южной, дорожка к входам магазина
+    const walk = (x0, z0, x1, z1) => sc.add(groundPatch('walk', x0, z0, x1, z1, 0.03));
+    walk(MAP.x0, h + 0.2, -h - 0.2, w1);
+    walk(h + 0.2, h + 0.2, cx - h - 0.2, w1);
+    walk(MAP.x0, -w1, cx - h - 0.2, -h - 0.2);
+    walk(-w1, w1, -h - 0.2, R.southZ);
+    walk(h + 0.2, w1, w1, R.southZ);
+    walk(w1, C4_ENTRY[0][1] - 1, C4_ENTRY[1][0] + 4, C4_ENTRY[0][1] + 1);
+    // разметка: переходы-«зебры», стоп-линии, осевая (у перекрёстка — сплошная)
+    const paint = new Kit(41), white = 0xe9e6dc;
+    const mark = (x, z, w, d) => paint.box(white, x, 0.022, z, w, 0.008, d, { b: 0 });
+    for (const c of CROSSINGS) {
+      for (let k = -3; k <= 3; k++) {
+        if (c.across === 'z') mark(c.x, k * 0.82, 2.8, 0.44); else mark(k * 0.82, c.z, 0.44, 2.8);
+      }
+    }
+    for (const L of LIGHTS) {
+      mark(L.stopE, h / 2, 0.3, h - 0.2);
+      mark(L.stopW, -h / 2, 0.3, h - 0.2);
+      if (L.stopN) mark(h / 2, L.stopN, h - 0.2, 0.3);
+    }
+    const crossX = CROSSINGS.filter((c) => c.across === 'z').map((c) => c.x), crossZ = CROSSINGS.filter((c) => c.across === 'x').map((c) => c.z);
+    for (let x = tw.x + 2; x < cx - h - 2; x += 4) if (Math.abs(x) > 16 && crossX.every((c) => Math.abs(x - c) > 4)) mark(x, 0, 2, 0.14);
+    for (const s of [-1, 1]) mark(s * 11.6, 0, 8.8, 0.14);
+    for (let z = tn.z + 2; z < -h - 1; z += 4) mark(cx, z, 0.14, 2);
+    const stopN = LIGHTS.find((l) => l.stopN).stopN;
+    for (let z = stopN + 3; z < R.southZ; z += 4) if (crossZ.every((c) => Math.abs(z - c) > 3)) mark(0, z, 0.14, 2);
+    const pm = paint.mesh({}, false);
+    pm.receiveShadow = true;
+    sc.add(pm);
+    // бордюры по краю асфальта; на переходах и у перекрёстка — разрывы
+    const cb = (x, z, w, d) => curb.box(0xd2cdc2, x, 0.07, z, w, 0.14, d, { surf: SURF.concrete, b: 0.03 });
+    const gapped = (a0, a1, gaps, put) => {   // отрезки от a0 до a1 с разрывами [g0, g1]
+      let a = a0;
+      for (const [g0, g1] of gaps.slice().sort((p, q) => p[0] - q[0])) { if (g0 > a) put(a, Math.min(g0, a1)); a = Math.max(a, g1); }
+      if (a < a1) put(a, a1);
+    };
+    const alongX = (z, x0, x1, gaps) => gapped(x0, x1, gaps, (a, b) => cb((a + b) / 2, z, b - a, 0.2));
+    const alongZ = (x, z0, z1, gaps) => gapped(z0, z1, gaps, (a, b) => cb(x, (a + b) / 2, 0.2, b - a));
+    const gx = crossX.map((c) => [c - 1.5, c + 1.5]), gz = crossZ.map((c) => [c - 1.5, c + 1.5]);
+    alongX(-h - 0.1, tw.x, cx - h - 0.1, gx);
+    alongX(h + 0.1, tw.x, cx + h + 0.1, gx.concat([[-h - 0.1, h + 0.1]]));
+    alongZ(cx - h - 0.1, tn.z, -h - 0.1, []); alongZ(cx + h + 0.1, tn.z, h + 0.1, []);
+    alongZ(-h - 0.1, 8.1, R.southZ, gz); alongZ(h + 0.1, 8.1, R.southZ, gz);
+    // светофоры: [x, z, светофор, машинная головка, куда смотрит, пешеходная, куда смотрит]
+    const lamp = (on, map) => new THREE.MeshBasicMaterial({ color: on, map: map || null, toneMapped: false });
+    const icon = [pedIconTexture(false), pedIconTexture(true)];
+    const carSet = () => [lamp(0x3b1714), lamp(0x3b2c0e), lamp(0x0f3320)], pedSet = () => [lamp(0x3b1714, icon[0]), lamp(0x0f3320, icon[1])];
+    this.lamps = {};
+    for (const L of LIGHTS) this.lamps[L.id] = L.id === 'c' ? { car: carSet(), ped: pedSet(), carS: carSet(), pedS: pedSet() } : { car: carSet(), ped: pedSet() };
+    const P2 = Math.PI / 2;
+    const poles = [
+      [-7.0, 3.8, 'c', 'car', -P2, 'ped', Math.PI], [-7.0, -3.8, 'c', null, 0, 'ped', 0],
+      [7.0, -3.8, 'c', 'car', P2, 'ped', 0], [7.0, 3.8, 'c', null, 0, 'ped', Math.PI],
+      [3.8, 9.0, 'c', 'carS', 0, 'pedS', -P2], [-3.8, 9.0, 'c', null, 0, 'pedS', P2],
+    ];
+    for (const L of LIGHTS) if (L.id !== 'c') poles.push([L.stopE - 0.5, 3.8, L.id, 'car', -P2, 'ped', Math.PI], [L.stopW + 0.5, -3.8, L.id, 'car', P2, 'ped', 0]);
+    for (const [x, z, id, car, cry, ped, pry] of poles) {
+      const pole = ownLightPole(car ? 3.4 : 2.5);
+      pole.position.set(x, 0, z);
+      sc.add(pole);
+      const head = (o, y, ry, mats) => {
+        o.g.position.set(x + Math.sin(ry) * 0.2, y, z + Math.cos(ry) * 0.2);
+        o.g.rotation.y = ry;
+        o.lamps.forEach((m, i) => { m.material = mats[i]; });
+        sc.add(o.g);
+      };
+      if (car) head(ownCarLightHead(), 2.95, cry, this.lamps[id][car]);
+      head(ownPedLightHead(), 2.05, pry, this.lamps[id][ped]);
+    }
+    // знаки «Пешеходный переход» у «зебр» без светофора на главной — справа по ходу, лицом к машинам
+    for (const c of CROSSINGS) {
+      if (c.across !== 'z' || c.signal) continue;
+      for (const [dx, z, ry] of [[-2.4, 4.1, -P2], [2.4, -4.1, P2]]) {
+        const s = ownCrossSign();
+        s.position.set(c.x + dx, 0, z); s.rotation.y = ry;
+        sc.add(s);
+      }
+    }
+    // тоннели: портал и холм над ним — машины въезжают и выезжают не из воздуха
+    const pw = ownTunnelPortal();
+    pw.position.set(tw.x, 0, 0); pw.rotation.y = Math.PI / 2;
+    const hw = new THREE.Mesh(ownHillGeo(tw.z1 - tw.z0, tw.x - tw.x1, 8.5, 21), MAT.flat);
+    hw.position.set(tw.x, 0, 0); hw.rotation.y = Math.PI / 2;
+    const pn = ownTunnelPortal();
+    pn.position.set(cx, 0, tn.z);
+    const hn = new THREE.Mesh(ownHillGeo(tn.x1 - tn.x0, tn.z - tn.z1, 7, 22), MAT.flat);
+    hn.position.set(cx, 0, tn.z);
+    for (const m of [hw, hn]) { m.castShadow = true; m.receiveShadow = true; }
+    sc.add(pw, hw, pn, hn);
+  }
+
+  // лампы светофоров по фазе (lightState в sim.js); мигающий зелёный — 3 раза в секунду
+  syncLights() {
+    if (!this.lamps) return;
+    const blink = Math.floor(this.t * 6) % 2 === 0;
+    const car = (mats, s) => {
+      mats[0].color.setHex(s === 'r' ? 0xff3b2f : 0x3b1714);
+      mats[1].color.setHex(s === 'y' ? 0xffb800 : 0x3b2c0e);
+      mats[2].color.setHex(s === 'g' ? 0x32ff7e : 0x0f3320);
+    };
+    const ped = (mats, s) => {
+      mats[0].color.setHex(s === 'r' ? 0xff4a3a : 0x3b1714);
+      mats[1].color.setHex(s === 'g' || (s === 'gb' && blink) ? 0x3dff8a : 0x0f3320);
+    };
+    for (const id in this.lamps) {
+      const st = this.g.lightState(id), L = this.lamps[id];
+      car(L.car, st.car); ped(L.ped, st.walk);
+      if (L.carS) { car(L.carS, st.carS); ped(L.pedS, st.walkS); }
+    }
   }
 
   // ───────── неизменный мир ─────────
@@ -211,23 +332,8 @@ class View {
       curb.box(0xc2bdb2, r.x1, ch / 2, cz, cw, ch, d - cw, { surf: SURF.concrete, b: 0.03 });
     }
     sc.add(groundPatch('gravel', -16, -40, 16, -8, 0.012));
-    // дороги: асфальт, бордюр по краям
-    sc.add(groundPatch('asphalt', MAP.x0 - 30, -3, MAP.seaX, 3, 0.016));
-    sc.add(groundPatch('asphalt', -3, 3, 3, MAP.z1 + 10, 0.016));
-    for (const s of [-1, 1]) {
-      const x0 = MAP.x0 - 30, x1 = MAP.seaX;
-      if (s < 0) curb.box(0xd2cdc2, (x0 + x1) / 2, 0.07, -3.1, x1 - x0, 0.14, 0.2, { surf: SURF.concrete, b: 0.03 });
-      else {
-        curb.box(0xd2cdc2, (x0 - 3.2) / 2, 0.07, 3.1, -3.2 - x0, 0.14, 0.2, { surf: SURF.concrete, b: 0.03 });
-        curb.box(0xd2cdc2, (x1 + 3.2) / 2, 0.07, 3.1, x1 - 3.2, 0.14, 0.2, { surf: SURF.concrete, b: 0.03 });
-      }
-      curb.box(0xd2cdc2, s * 3.1, 0.07, (3.2 + MAP.z1 + 10) / 2, 0.2, 0.14, MAP.z1 + 10 - 3.2, { surf: SURF.concrete, b: 0.03 });
-    }
+    this.buildRoads(curb);
     sc.add(curb.mesh({}, false));
-    const dash = [];
-    for (let x = MAP.x0 - 28; x < MAP.seaX; x += 4) dash.push(B(0xe9e6dc, x, 0.02, 0, 2, 0.01, 0.16));
-    for (let z = 6; z < MAP.z1 + 8; z += 4) dash.push(B(0xe9e6dc, 0, 0.02, z, 0.16, 0.01, 2));
-    sc.add(meshOf(dash, true, false));
     // море и причал
     const sea = flatRect(MAP.seaX, -140, 260, 190, 0x2f7fb0, 0.03);
     sea.material = plainMaterial({ color: 0x2c78a8, roughness: 0.18, metalness: 0 });
@@ -245,6 +351,7 @@ class View {
       if (x > MAP.seaX - 4) continue;
       const inside = x > MAP.x0 - 3 && x < MAP.x1 && z > MAP.z0 - 3 && z < MAP.z1 + 3;
       if (inside) continue;
+      if ((Math.abs(z) < 8 && x < MAP.x0) || (Math.abs(x) < 8 && z > MAP.z1)) continue;   // дороги за краем карты
       spots.push([x, z, 0.7 + rngNext(rs) * 0.7]);
     }
     if (this.K) { this.buildDecorK(spots); return; }
@@ -283,7 +390,7 @@ class View {
     // заводские корпуса за краями карты
     const bl = MODEL_OF.buildings;
     const south = [-66, -40, -14, 16, 44, 70].map((x, i) => [x, 92, Math.PI, 1, bl[i % bl.length]]);
-    const west = [-26, 2, 30, 58].map((z, i) => [-104, z, Math.PI / 2, 1, bl[(i + 2) % bl.length]]);
+    const west = [-30, 30, 58].map((z, i) => [-104, z, Math.PI / 2, 1, bl[(i + 2) % bl.length]]);
     const north = [-58, -34, 34, 58].map((x, i) => [x, -58, 0, 1, bl[(i + 4) % bl.length]]);
     for (const [x, z, ry, s, key] of south.concat(west, north)) {
       const m = kMesh(key, { size: [15, null, null], longX: true });
@@ -302,6 +409,9 @@ class View {
     const free = (x, z) => {
       if (Math.abs(z) < 5 || (Math.abs(x) < 5 && z > 0)) return false;
       if (x > MAP.seaX - 4) return false;
+      if (x > ROAD.coastX - 6 && z < 5) return false;               // береговая дорога
+      if (x > ROAD.tunnelN.x0 - 3 && z < ROAD.tunnelN.z + 3) return false;   // холм северного тоннеля
+      if (z > C4_ENTRY[0][1] - 2 && x > 2 && x < C4_ENTRY[1][0] + 6) return false;   // дорожка к магазину
       if (x > -18 && x < 18 && z > -42 && z < -6) return false;
       for (const zz of ZONES) { const q = zz.rect; if (x > q.x0 - 3 && x < q.x1 + 3 && z > q.z0 - 3 && z < q.z1 + 3) return false; }
       for (const p of PADS) if (p.gate && dist(x, z, p.x, p.z) < 5) return false;
@@ -350,6 +460,7 @@ class View {
       o = (this.K && makeCharacterK(style, style === 'player' ? 0 : (a.look || 0))) || buildCharacter(style, a.look || 0);
       o.phase = 0;
       o.g.position.set(a.x, 0, a.z);
+      o.g.rotation.order = 'YXZ';   // наклон (сбила машина) — в своей системе, после поворота
       o.g.rotation.y = a.face || 0;
       this.scene.add(o.g);
       this.agentObjs.set(a, o);
@@ -584,7 +695,8 @@ class View {
       if (!this.pileSlot(ref.p, it, slot, out)) { out.x = p.x; out.y = 1.4; out.z = p.z; out.ry = 0; }
       return true;
     }
-    if (ref.tr) { out.x = ref.tr.x - 0.7 * ref.tr.dir; out.y = 1.3; out.z = ref.tr.z; out.ry = 0; return true; }
+    if (ref.tr) { out.x = ref.tr.x - 0.7 * ref.tr.dx; out.y = 1.3; out.z = ref.tr.z - 0.7 * ref.tr.dz; out.ry = ref.tr.face || 0; return true; }
+    if (ref.loose) { out.x = ref.loose.x; out.y = 0.03; out.z = ref.loose.z; out.ry = ref.loose.ry; return true; }
     if (ref.tree !== undefined) { const q = PLOTS[ref.tree]; out.x = q.x; out.y = 1.2; out.z = q.z; out.ry = 0; return true; }
     if (ref.ship) { out.x = this.shipX || SHIP_DOCK[0]; out.y = 2.4; out.z = SHIP_DOCK[1]; out.ry = 0; return true; }
     return false;
@@ -647,6 +759,8 @@ class View {
     } else if (e.t === 'hire') {
       const o = this.charFor(e.w);
       this.pop(o.g);
+    } else if (e.t === 'hit') {
+      this.shake = 0.45;   // сбила машина — встряхнуть камеру
     }
   }
 
@@ -712,15 +826,26 @@ class View {
       let o = this.truckObjs.get(tr);
       if (!o) { o = (this.K || this.O) ? buildTruckK(tr.kind) : buildTruck(tr.kind); this.scene.add(o); this.truckObjs.set(tr, o); }
       o.position.set(tr.x, 0, tr.z);
-      o.rotation.y = tr.dir > 0 ? 0 : Math.PI;
+      o.rotation.y = tr.face || 0;
       if (tr.kind === 'log' && near(tr.x, tr.z)) {
+        // брёвна на кониках: локально −0.7 м от центра машины, рядами поперёк
         for (let i = 0; i < Math.min(tr.load, 21); i++) {
-          const layer = Math.floor(i / 7), k = i % 7;
-          this.addInst('log', tr.x - 0.7 * tr.dir, 1.0 + layer * 0.34, tr.z - 0.9 + k * 0.3 - (layer % 2) * 0.1, Math.PI / 2 * 0, 1);
+          const layer = Math.floor(i / 7), k = i % 7, lx = -0.7, lz = -0.9 + k * 0.3 - (layer % 2) * 0.1;
+          this.addInst('log', tr.x + lx * tr.dx - lz * tr.dz, 1.0 + layer * 0.34, tr.z + lx * tr.dz + lz * tr.dx, tr.face || 0, 1);
         }
       }
     }
     for (const [tr, o] of this.truckObjs) if (!tseen.has(tr)) { this.scene.remove(o); this.truckObjs.delete(tr); }
+
+    // рассыпанное: сначала летит по дуге от игрока, потом лежит; перед тем как пропасть — мигает
+    for (const l of g.loose) {
+      if (l.t < 0 || !near(l.x, l.z)) continue;
+      const k = Math.min(1, l.t / 0.55), life = TUNE.looseLife - l.t;
+      if (life < 6 && Math.floor(this.t * 5) % 2 === 0) continue;
+      const x = lerp(l.x0, l.x, k), z = lerp(l.z0, l.z, k), y = lerp(l.y0, 0.03, k) + Math.sin(Math.PI * k) * 1.1 * (1 - k * 0.3);
+      this.addInst(l.it, x, y, z, l.ry + (1 - k) * 5);
+    }
+    this.syncLights();
 
     this.syncShip();
     this.syncPlots();
@@ -737,6 +862,12 @@ class View {
     const ct = this.camTarget, z = this.zoom;
     this.camera.position.set(ct.x, 19 * z, ct.z + 15 * z);
     this.camera.lookAt(ct.x, 0.6, ct.z + 0.5);
+    if (this.shake > 0) {
+      this.shake -= dt;
+      const a = Math.max(0, this.shake) * 0.6;
+      this.camera.position.x += (Math.random() - 0.5) * a;
+      this.camera.position.y += (Math.random() - 0.5) * a;
+    }
     lookSunAt(this.sun, ct.x, ct.z);
     this.labels.end();
     this.renderer.render(this.scene, this.camera);
@@ -752,14 +883,21 @@ class View {
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
     o.g.rotation.y += d * (1 - Math.exp(-14 * dt));
+    // сбила машина: падает на спину, лежит, встаёт
+    if (a.stun > 0) {
+      const T = a.stun0 || 1, el = T - a.stun;
+      o.g.rotation.x = -1.35 * (el < 0.15 ? el / 0.15 : a.stun < 0.35 ? a.stun / 0.35 : 1);
+    } else if (o.g.rotation.x) o.g.rotation.x = 0;
     const moving = a.moving;
     const carry = a.stack.length > 0;
     const far = Math.abs(a.x - this.g.pl.x) > VIEW_R || Math.abs(a.z - this.g.pl.z) > VIEW_R;
+    o.g.visible = !far;   // далеко — всё равно в тумане: не рисуем и не анимируем
     let bob = 0;
     if (o.model) {
       // человечек Kenney: анимации «стоит / идёт / бежит» + руки «несу стопку»
-      if (!far || o.g.visible) {
-        const g = this.g, sp = a.kind === 'player' ? g.uv('u_speed') : a.kind === 'worker' ? g.uv('u_wSpeed') : TUNE.custSpeed;
+      if (!far) {
+        const g = this.g, sp = a.kind === 'player' ? g.uv('u_speed') : a.kind === 'worker' ? g.uv('u_wSpeed')
+          : TUNE.custSpeed * (a.state === 'far' || a.state === 'gone' ? 1.3 : 1);   // по тротуару идут бодрее
         o.set(moving, sp, carry, dt);
       }
     } else {
