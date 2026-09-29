@@ -26,9 +26,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); f
 <body>
 <canvas id="c"></canvas>
 <div id="labels"></div>
-<div id="info"><b>Витрина моделей Kenney</b> (бесплатные, CC0). <b>★ и жёлтый круг</b> — что стоит в игре по умолчанию.<br>
+<div id="info"><b>Витрина моделей</b>: сверху — свои (сделаны под игру), ниже — кандидаты Kenney (бесплатные, CC0).
+<b>★ и жёлтый круг</b> — что стоит в игре сейчас.<br>
 Тяни мышью — двигать, колёсико — приблизить, WASD — тоже двигать. Напиши, что поменять: «группа — модель».<br><span id="status">Загрузка…</span></div>
-<script>window.LESO_BUILD = 'showcase-1';</script>
+<script>window.LESO_BUILD = 'showcase-2';</script>
 <script type="importmap">
   { "imports": {
       "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
@@ -40,7 +41,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); f
   import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
   import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
   window.THREE = THREE; window.GLTFLoader = GLTFLoader; window.SkeletonUtils = SkeletonUtils;
-  for (const f of ['util', 'assets', 'showcase']) {
+  for (const f of ['util', 'config', 'models', 'look', 'craft', 'assets', 'kmodels', 'showcase']) {
     await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'src/' + f + '.js?v=' + window.LESO_BUILD; s.onload = res; s.onerror = rej; document.body.appendChild(s); });
   }
 </script>
