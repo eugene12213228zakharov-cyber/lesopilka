@@ -232,8 +232,10 @@ const PACKED_OUT = ['packer_out', 'packer2_out'];
 const ROUTES = {
   logs:     { name: 'Грузчик брёвен', from: ['yard', 'flogs'], to: ['saw1_in', 'saw2_in', 'saw3_in'], hint: 'брёвна со склада → пилорамы' },
   // excess — забирать только излишки: когда выход станка заполнен больше чем на эту долю
-  boards:   { name: 'Продавец досок', from: SAWS_OUT, to: ['counter', 'counter2'], excess: 0.5, hint: 'лишние доски с пилорам → прилавки' },
-  fboards:  { name: 'Продавец досок', from: ['saw4_out'], to: ['counter0'], excess: 0.5, hint: 'лишние доски с пилорамы → прилавок у леса' },
+  // продавцы досок носят сразу, как доски появились (раньше ждали, пока выход пилорамы заполнится наполовину, —
+  // у леса стояли без дела). yield — уступают доски столярке, пока ей не хватает и её грузчик досок работает
+  boards:   { name: 'Продавец досок', from: SAWS_OUT, to: ['counter', 'counter2'], yield: { route: 'jboards', piles: ['press1_in', 'press2_in', 'benchC_in'], it: 'board' }, hint: 'доски с пилорам → прилавки' },
+  fboards:  { name: 'Продавец досок', from: ['saw4_out'], to: ['counter0'], hint: 'доски с пилорамы → прилавок у леса' },
   tractor:  { name: 'Тракторист', from: ['flogs'], to: SAWS_IN, hint: 'брёвна с делянки → пилорамы' },
   jlogs:    { name: 'Грузчик брёвен', from: ['yard', 'flogs'], to: ['beamer1_in', 'beamer2_in'], hint: 'брёвна → брусовальные станки' },
   jboards:  { name: 'Грузчик досок', from: SAWS_OUT, to: ['press1_in', 'press2_in', 'benchC_in'], hint: 'доски с пилорам → прессы и верстак стульев' },

@@ -122,6 +122,7 @@ class Game {
       st: {},
       trees: PLOTS.map(() => ({ stage: 2, t: 0 })),
       ship: null,
+      tips: {},   // какие одноразовые подсказки уже показаны (о пне после первой рубки)
       belt: [],   // что едет по конвейеру в порт: { it, d } — d, сколько метров проехало; первое — ближе к концу
       sitePriority: true,
       tut: 0,
@@ -516,7 +517,7 @@ class Game {
         const n = Math.min(2, free);
         for (let k = 0; k < n; k++) { a.stack.push('log'); this.ev({ t: 'x', it: 'log', from: { tree: i }, to: { a } }); }
         this.stat('log', n);
-        this.ev({ t: 'fell', i });
+        this.ev({ t: 'fell', i, by: a.kind });
         return true;
       }
     } else if (tr.stage === 0 && canPlant) {
@@ -638,12 +639,22 @@ class Game {
       return;
     }
     const exSrc = R.excessWhen ? (this.stationOn(R.excessWhen) ? R.excessSrc : []) : null;
-    const job = this.bestJob(w, R.from, R.to, R.excess || 0, exSrc);
+    const job = this.bestJob(w, R.from, R.to, this.routeExcess(R), exSrc);
     if (!job) { this.rest(w, 1.2); return; }
     Object.assign(w, job);
     w.task = 'toSrc';
     this.goPile(w, w.src);
   }
+
+  // маршрут уступает: куда сейчас нужнее (R.yield — куча, где того же меньше половины, и её грузчик работает); null — не уступает
+  yieldPile(R) {
+    const y = R.yield;
+    if (!y || !this.workers.some((x) => x.route === y.route && x.on)) return null;
+    return y.piles.find((id) => this.pileSet.has(id) && this.count(id, y.it) < this.cap(id, y.it) * 0.5) || null;
+  }
+  // с какого заполнения источника маршрут берёт: уступает — только излишки (выход станка больше чем наполовину),
+  // иначе — сколько есть. Досок у пилорам полно — носит на прилавок, даже если столярке не хватает
+  routeExcess(R) { return this.yieldPile(R) ? Math.max(0.5, R.excess || 0) : R.excess || 0; }
 
   pileFill(id) {
     const p = PILES[id];
@@ -714,12 +725,14 @@ class Game {
   }
 
   // ───────── чего ждёт рабочий ─────────
-  // Почему стоит — одной строкой для подписи над головой и списка рабочих; null — не стоит или вот-вот пойдёт.
-  // Считается по текущему состоянию (тем же bestJob), поэтому зовётся только из графики и только для стоящих.
+  // Почему стоит: { text — полностью (список рабочих, подпись на компьютере), short — коротко (подпись на телефоне) };
+  // null — не стоит или вот-вот пойдёт. Считается по текущему состоянию (тем же bestJob), поэтому зовётся только
+  // из графики и списка и только для стоящих
   workerWhy(w) {
-    if (!w.on) return '⏸ Выключен';
+    const say = (icon, short, full) => ({ text: icon + ' ' + (full || short), short: icon + ' ' + short });
+    if (!w.on) return say('⏸', 'Выключен');
     if (w.stun > 0) return null;
-    if (w.xwait) return w.xwait === 'light' ? '🚦 Ждёт зелёный' : '🚗 Пропускает машину';
+    if (w.xwait) return w.xwait === 'light' ? say('🚦', 'Ждёт зелёный') : say('🚗', 'Пропускает машину');
     // «стул в коробке, стол в коробке, шкаф в коробке» → «мебель в коробках» — подпись над головой короче
     const names = (list) => {
       const out = [];
@@ -733,37 +746,38 @@ class Game {
       const R = ROUTES[w.route];
       if (w.stack.length) {
         const dst = R.to.find((id) => this.pileSet.has(id) && w.stack.some((it) => this.accepted(id).indexOf(it) >= 0));
-        return '💤 Некуда отнести: ' + (dst ? 'полон ' + pileName(dst) : 'станок не куплен');
+        return say('💤', 'Некуда отнести', 'Некуда отнести: ' + (dst ? 'полон ' + pileName(dst) : 'станок не куплен'));
       }
-      const why = {};
+      const why = {}, y = this.yieldPile(R);
       const exSrc = R.excessWhen ? (this.stationOn(R.excessWhen) ? R.excessSrc : []) : null;
-      if (this.bestJob(w, R.from, R.to, R.excess || 0, exSrc, why)) return null;
-      if (!R.to.some((id) => this.pileSet.has(id))) return '💤 Некуда носить: станок не куплен';
+      if (this.bestJob(w, R.from, R.to, this.routeExcess(R), exSrc, why)) return null;
+      if (y && why.excess) return say('💤', 'Уступает столярке', 'Уступает доски столярке: на ' + pileName(y) + ' мало, а у пилорам меньше половины');
+      if (!R.to.some((id) => this.pileSet.has(id))) return say('💤', 'Станок не куплен', 'Некуда носить: станок не куплен');
       if (why.batch) {
         const b = why.batch;
-        return b.room < b.minB ? `💤 Ждёт места: ${pileName(b.dst)} — свободно ${b.room}, нужно ${b.minB}`
-          : `💤 Ждёт, пока накопится: есть ${b.n}, нужно ${b.minB}`;
+        return b.room < b.minB ? say('💤', 'Ждёт места', `Ждёт места: ${pileName(b.dst)} — свободно ${b.room}, нужно ${b.minB}`)
+          : say('💤', 'Копит партию', `Ждёт, пока накопится: есть ${b.n}, нужно ${b.minB}`);
       }
-      if (why.full) return '💤 Некуда нести: полон ' + pileName(why.full);
-      if (why.site) return '💤 Стройка в приоритете: ' + names([why.site]) + ' оставляет строителям';
-      if (why.excess) return '💤 Берёт только лишнее, а тут мало: ' + pileName(why.excess);
+      if (why.full) return say('💤', 'Некуда нести', 'Некуда нести: полон ' + pileName(why.full));
+      if (why.site) return say('💤', 'Уступает стройке', 'Стройка в приоритете: ' + names([why.site]) + ' оставляет строителям');
+      if (why.excess) return say('💤', 'Ждёт излишков', 'Берёт только лишнее, а тут мало: ' + pileName(why.excess));
       // нечего брать: что маршрут носит (выходы станков — «пока сделают») или какой склад пуст
       const src = R.from.filter((id) => this.pileSet.has(id));
       if (src.every((id) => PILES[id].station)) {
         const its = new Set();
         for (const id of src) for (const it in PILES[id].accepts) if (R.to.some((d) => this.pileSet.has(d) && this.accepted(d).indexOf(it) >= 0)) its.add(it);
-        return '💤 Ждёт, пока сделают: ' + names([...its]);
+        return say('💤', 'Ждёт, пока сделают', 'Ждёт, пока сделают: ' + names([...its]));
       }
-      return '💤 Пусто: ' + src.map(pileName).join(', ');
+      return say('💤', 'Пусто', 'Пусто: ' + src.map(pileName).join(', '));
     }
     if (w.task !== 'rest') return null;
     if (w.role === 'builder') {
       const need = this.siteNeed(), miss = Object.keys(need).filter((it) => need[it] > 0);
-      return miss.length ? '💤 Для этажа пока нигде нет: ' + names(miss) : '💤 Небоскрёб достроен';
+      return miss.length ? say('💤', 'Нечего нести', 'Для этажа пока нигде нет: ' + names(miss)) : say('💤', 'Небоскрёб достроен');
     }
-    if (w.role === 'lumberjack') return '💤 Ждёт, пока вырастут деревья';
-    if (w.role === 'forester') return '💤 Все участки засажены';
-    if (w.role === 'collector') return '💤 Кассы пустые';
+    if (w.role === 'lumberjack') return say('💤', 'Ждёт деревья', 'Ждёт, пока вырастут деревья');
+    if (w.role === 'forester') return say('💤', 'Всё засажено', 'Все участки засажены');
+    if (w.role === 'collector') return say('💤', 'Кассы пустые');
     return null;
   }
 
@@ -773,7 +787,7 @@ class Game {
     if (w.stun > 0) return 'сбила машина — встаёт';
     if (w.still > TUNE.idleShow) {
       const why = this.workerWhy(w);
-      if (why) { const t = why.replace(/^\S+ /, ''); return t[0].toLowerCase() + t.slice(1); }
+      if (why) { const t = why.text.replace(/^\S+ /, ''); return t[0].toLowerCase() + t.slice(1); }
     }
     const load = () => {
       const cnt = {};
@@ -1704,6 +1718,13 @@ class Game {
       if (rem <= s.money && (!best || rem < best.rem)) best = { p, rem };
     }
     if (best) return ['Хватает денег: ' + padTitle(best.p) + ' — ' + fmtMoney(best.rem), 'pad:' + best.p.id];
+    // лес почти вырублен, а лесника нет — подскажем сажать (не все понимают, что пень надо засадить)
+    if (this.open.z2 && !this.workers.some((w) => w.role === 'forester' && w.on)) {
+      let grown = 0;
+      for (let i = 0; i < PLOTS.length; i++) if (this.plotOn(i) && s.trees[i].stage === 2) grown++;
+      const stump = this.nearestTree(this.pl, 0);
+      if (grown < 3 && stump >= 0) return ['Лес кончается — посади деревья: встань на пни', 'plot:' + stump];
+    }
     if (s.floor < FLOORS.length) {
       const need = this.siteNeed();
       const carry = this.pl.stack.some((it) => need[it] > 0);

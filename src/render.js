@@ -586,16 +586,20 @@ class View {
       const soil = mergeParts([C(0x6b4a2b, 0, 0.02, 0, 1.0, 0.04, 0, 0, 0, 'cyl20')]);
       const tree = (this.K && fittedGeo(MODEL_OF.tree, { size: [null, 3.9, null] })) || mergeParts(treeParts(1));
       const stump = (this.K && fittedGeo(MODEL_OF.stump, { size: [0.75, null, null] })) || mergeParts([C(0x8b5a2b, 0, 0.15, 0, 0.2, 0.3), C(0xd9a86c, 0, 0.301, 0, 0.18, 0.004)]);
+      // на пне — полупрозрачный саженец: видно, что сюда надо встать и посадить новое дерево
+      const sprout = mergeParts(treeParts(0.4));
+      const sproutMat = new THREE.MeshBasicMaterial({ color: 0x8fe07a, transparent: true, opacity: 0.55, depthWrite: false });
       for (let i = 0; i < PLOTS.length; i++) {
         const q = PLOTS[i], grp = new THREE.Group();
         grp.position.set(q.x, 0, q.z);
         const s = new THREE.Mesh(soil, MAT.flat); s.receiveShadow = true;
         const t = new THREE.Mesh(tree, MAT.flat); t.castShadow = true;
         const st = new THREE.Mesh(stump, MAT.flat); st.castShadow = true;
-        grp.add(s, t, st);
+        const sp = new THREE.Mesh(sprout, sproutMat); sp.position.y = 0.3;
+        grp.add(s, t, st, sp);
         grp.visible = false;
         this.scene.add(grp);
-        this.plotObjs.push({ grp, tree: t, stump: st });
+        this.plotObjs.push({ grp, tree: t, stump: st, sprout: sp });
       }
     }
   }
@@ -1002,12 +1006,12 @@ class View {
       let why = null;
       if (!w.on || w.xwait || w.still > TUNE.idleShow) {
         let c = this.whyCache.get(w);
-        if (!c || this.t - c.t > 0.4) { c = { t: this.t, text: g.workerWhy(w) }; this.whyCache.set(w, c); }
-        why = c.text;
+        if (!c || this.t - c.t > 0.4) { c = { t: this.t, why: g.workerWhy(w) }; this.whyCache.set(w, c); }
+        why = c.why;
       }
       if (!why && !this.showTags && !hl) return;
       const num = this.showTags || hl ? `<b>${i + 1}</b>` : '';
-      this.labels.set('w' + i, p.x, 2.3, p.z, num + (why ? `<span>${why}</span>` : ''), 'wtag' + (hl ? ' hl' : '') + (why ? ' idle' : ''));
+      this.labels.set('w' + i, p.x, 2.3, p.z, num + (why ? `<span class="wf">${why.text}</span><span class="ws">${why.short}</span>` : ''), 'wtag' + (hl ? ' hl' : '') + (why ? ' idle' : ''));
     });
     this.hlRing.visible = !!ring;
     if (ring) { this.hlRing.position.set(ring.x, 0.05, ring.z); this.hlRing.scale.setScalar(1 + Math.sin(this.t * 6) * 0.08); }
@@ -1114,6 +1118,7 @@ class View {
     if (!g.open.z2 && !this.plotsShown) return;
     this.plotsShown = true;
     const grow = g.uv('u_grow');
+    let near = -1, nd = 7;   // ближайший к игроку пень — подпишем, что делать
     for (let i = 0; i < PLOTS.length; i++) {
       const o = this.plotObjs[i];
       if (!o) continue;
@@ -1122,10 +1127,17 @@ class View {
       if (!on) continue;
       const tr = g.s.trees[i];
       o.stump.visible = tr.stage === 0;
+      o.sprout.visible = tr.stage === 0;
+      if (tr.stage === 0) {
+        o.sprout.scale.setScalar(1 + Math.sin(this.t * 4 + i) * 0.12);
+        const d = dist(PLOTS[i].x, PLOTS[i].z, g.pl.x, g.pl.z);
+        if (d < nd) { nd = d; near = i; }
+      }
       o.tree.visible = tr.stage > 0;
       if (tr.stage === 1) o.tree.scale.setScalar(0.25 + 0.75 * Math.min(1, tr.t / grow));
       else if (tr.stage === 2) { o.tree.scale.setScalar(1); o.tree.rotation.z = Math.sin(this.t * 1.3 + i) * 0.025; }
     }
+    if (near >= 0) this.labels.set('sprout', PLOTS[near].x, 1.6, PLOTS[near].z, '🌱 Встань — посадишь дерево', 'station');
   }
 
   syncPads() {
@@ -1142,7 +1154,7 @@ class View {
         // вторая строка — что даст покупка (отзыв: «нужна подсказка, что будет на выходе»)
         const info = padInfo(p);
         this.labels.set('pad' + p.id, p.x, p.station ? 3.2 : 2.4, p.z,
-          `<div class="t">${padTitle(p)}</div>${info ? `<div class="i">${info}</div>` : ''}<div class="c${ok}">${fmtMoney(rem)}</div>`, 'pad' + (p.gate ? ' gate' : ''));
+          `<div class="t">${padTitle(p)}</div>${info ? `<div class="i">${info}</div>` : ''}<div class="c${ok}">${fmtMoney(rem)}</div>`, 'pad' + (p.gate ? ' gate' : '') + (dist(p.x, p.z, g.pl.x, g.pl.z) < 9 ? ' near' : ''));   // near — на телефоне «что даст» только у ближней
       }
     }
   }

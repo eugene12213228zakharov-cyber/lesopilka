@@ -47,6 +47,7 @@ button { font: inherit; cursor: pointer; }
 .lbl.wtag b { background: #ffd43b; color: #3a2a00; border-radius: 6px; padding: 0 5px; font-weight: 900; }
 .lbl.wtag.hl { box-shadow: 0 0 0 2px #35d0ff; }
 .lbl.wtag.idle:not(:has(b)) { padding-left: 7px; }
+.lbl.wtag .ws { display: none; }   /* короткая причина — только на телефоне */
 .lbl.pad .c.ok { color: #2f9e54; }
 .lbl.info { background: rgba(255,255,255,0.94); color: #23303b; border-radius: 10px; padding: 6px 10px; box-shadow: 0 3px 10px rgba(0,0,0,0.18); font-size: 12px; font-weight: 700; border: 2px solid #f08a24; }
 .lbl.info .t { font-weight: 900; font-size: 13px; margin-bottom: 2px; }
@@ -180,12 +181,28 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
   #goal { top: 66px; max-width: min(520px, calc(100vw - 32px)); }
 }
 @media (max-width: 760px) {
-  #goal { top: auto; bottom: 60px; max-width: calc(100vw - 32px); font-size: 13px; }
+  #goal { top: auto; bottom: 76px; max-width: calc(100vw - 32px); font-size: 13px; }   /* над кнопками, а не под ними */
   #btns { top: auto; bottom: 14px; right: 50%; transform: translateX(50%); max-width: none; flex-wrap: nowrap; }
   #btns button { padding: 8px 10px; font-size: 13px; }
   #bFb { display: none; }   /* на телефоне — в Меню, иначе кнопки не влезают */
+  /* подписи мельче: на узком экране они закрывали полэкрана; над рабочим — коротко, «что даст» — только у ближней площадки */
+  .lbl.pad { padding: 2px 6px 3px; border-width: 1.5px; border-radius: 8px; }
+  .lbl.pad .t { font-size: 10px; }
+  .lbl.pad .c { font-size: 12px; }
+  .lbl.pad .i { font-size: 9px; }
+  .lbl.pad:not(.near) .i { display: none; }
+  .lbl.station { font-size: 9px; padding: 2px 6px; }
+  .lbl.info { font-size: 10px; padding: 4px 7px; }
+  .lbl.info .t { font-size: 11px; }
+  .lbl.zone { font-size: 10px; padding: 4px 8px; }
+  .lbl.zone .t { font-size: 12px; }
+  .lbl.cnt { font-size: 9px; padding: 0 5px; }
+  .lbl.money { font-size: 11px; padding: 1px 6px; }
+  .lbl.wtag { font-size: 9px; max-width: 120px; padding: 1px 5px 1px 2px; gap: 3px; }
+  .lbl.wtag .wf { display: none; }
+  .lbl.wtag .ws { display: inline; }
   kbd { display: none; }
-  #carry { bottom: 104px; }
+  #carry { bottom: auto; top: 150px; left: auto; right: 12px; transform: none; }   /* что в руках — справа сверху, не под баннером цели */
   #shipCard { min-width: 0; max-width: calc(100vw - 32px); font-size: 11px; }
   #adminBtn { bottom: auto; top: 104px; left: auto; right: 16px; }
   #admin { bottom: auto; top: 140px; }
@@ -219,7 +236,7 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
 
 <script>
   // Номер сборки: меняется при каждом обновлении, чтобы браузер не смешал старые и новые файлы
-  window.LESO_BUILD = '2026.09.30-7';
+  window.LESO_BUILD = '2026.09.30-8';
   // Тестовая сборка: адрес …/lesopilka-test/ или локальный сервер — своё сохранение и админка F2
   window.LESO_TEST = /lesopilka-test/.test(location.pathname) || ['localhost', '127.0.0.1'].indexOf(location.hostname) >= 0;
   // последние ошибки — прикладываются к сообщению о баге (кнопка «💬»)
