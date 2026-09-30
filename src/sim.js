@@ -297,6 +297,7 @@ class Game {
     const b = p.accepts[it] || 0;
     if (!b) return 0;
     if (id === 'yard') return this.uv('u_yard');
+    if (id === 'counter') return this.uv('u_counter');
     if (p.shelf) return this.uv('u_shelf');
     if (p.role === 'out') return Math.round(b * this.uv('u_store'));
     return b;
