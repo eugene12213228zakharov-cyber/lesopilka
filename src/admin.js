@@ -79,7 +79,7 @@ class Admin {
     const g = this.g, z = ZONE_BY_ID[zid];
     while (g.s.floor < z.floor && this.completeFloor());
     for (const zz of ZONES) {
-      if (zz.id === 'z1' || zz.floor > z.floor) continue;
+      if (zz.id === START_ZONE || zz.floor > z.floor) continue;
       const gate = PAD_BY_ID['p_gate_' + zz.id];
       if (gate && !g.s.padDone[gate.id]) g.completePad(gate);
     }

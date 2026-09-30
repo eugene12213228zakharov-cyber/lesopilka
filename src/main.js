@@ -63,7 +63,9 @@ window.lesopilkaReplace = (data) => {
     game.events.length = 0;
     if (force || r.money >= 1 || r.floors > 0) ui.showOffline(r);
   };
-  if (save && save.savedAt) catchUp((Date.now() - save.savedAt) / 1000);
+  const stale = save && save.v !== SAVE_VERSION;   // сохранение прошлой версии (до начала с леса): игра начинается заново
+  if (stale && !bot) ui.showReset();
+  else if (save && save.savedAt) catchUp((Date.now() - save.savedAt) / 1000);
   else if (!save && !bot) ui.showWelcome();
 
   if (TEST_MODE) {

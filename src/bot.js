@@ -12,10 +12,14 @@ class Bot {
     this.lastPos = [0, 0];
     this.stuckT = 0;
     this.buyLog = [];
+    this.lastSite = 0;   // когда последний раз относил на стройку сам (см. itemValue)
     this.rs = { s: 4242 };
   }
 
   step(dt) {
+    // закупка брёвен: как только лесопилка открыта — заказ на весь лесовоз (растёт вместе с «Лесовоз: больше брёвен»)
+    const g = this.g;
+    if (g.open.z1 && g.s.logOrder < g.logCap()) g.setLogOrder(g.logCap());
     this.buyUpgrades();
     if (!this.task) { this.task = this.decide(); this.path = null; }
     this.run(dt);
@@ -84,7 +88,14 @@ class Bot {
   itemValue(it, dst) {
     const g = this.g, p = PILES[dst];
     if (p.trash) return 0;
-    if (p.site) return g.price(it) * (this.gatePending() ? 0.5 : 1.8) + 2;
+    if (p.site) {
+      if (this.gatePending()) return g.price(it) * 0.5 + 2;
+      // пока нет строителей, стройку тянет сам, как человек: продаёт, а время от времени несёт партию на стройку —
+      // чем дольше не был на стройке, тем охотнее (у леса прилавок в 4 м от пилорамы, стройка — в 65 м:
+      // иначе бот её не строил бы никогда)
+      const k = g.workers.some((w) => w.role === 'builder' && w.on) ? 1.8 : 1.8 + clamp((g.s.playT - this.lastSite) / 90, 0, 6);
+      return g.price(it) * k + 2;
+    }
     if (p.dock) return g.price(it) * TUNE.exportMul * g.uv('u_export') * 0.7;
     if (dst === 'pwh') return g.price(it) * TUNE.exportMul * g.uv('u_export') * 0.5;
     if (dst === 'belt_in') return g.price(it) * TUNE.exportMul * g.uv('u_export') * 0.48;   // конвейер довезёт до склада порта
@@ -120,6 +131,7 @@ class Bot {
         if (room[it] > 0) { room[it]--; v += this.itemValue(it, id); }
       }
       if (v <= 0) continue;
+      if (p.site) v += this.finishBonus(pl.stack.filter((it) => g.siteNeed()[it] > 0).length);
       const sc = v / (this.travel(pl.x, pl.z, p.x, p.z) + 1);
       if (sc > bs) { bs = sc; best = id; }
     }
@@ -134,7 +146,7 @@ class Bot {
       const d = this.bestDrop();
       if (d) return this.at({ k: 'drop', id: d }, d);
       if (pl.stack.length >= g.capOf(pl) * 0.5 || !this.bestWork()) {
-        const tr = g.pileSet.has('trash3') && pl.x > 0 ? 'trash3' : 'trash1';
+        const tr = g.nearestTrash(pl.x, pl.z);
         return this.at({ k: 'drop', id: tr }, tr);
       }
     }
@@ -142,6 +154,15 @@ class Bot {
   }
 
   at(t, id) { const p = PILES[id]; t.x = p.x; t.z = p.z; return t; }
+
+  // доставка достраивает этаж — премия: этаж открывает зоны и поднимает цены. Без неё бот по 20 минут не нёс
+  // последнюю доску: одна доска на стройку «дешевле» 14 на прилавок рядом
+  finishBonus(n) {
+    const need = this.g.siteNeed();
+    let left = 0;
+    for (const it in need) left += need[it];
+    return left > 0 && n >= left ? this.g.price('board') * 400 : 0;
+  }
 
   bestWork() {
     const g = this.g, s = g.s, pl = g.pl, cap = g.capOf(pl), free = cap - pl.stack.length;
@@ -161,9 +182,10 @@ class Bot {
           if (sp <= 0) continue;
           const n = Math.min(c[it], sp, free);
           if (n <= 0) continue;
-          const v = n * this.itemValue(it, dst);
+          let v = n * this.itemValue(it, dst);
           if (v <= 0) continue;
           const pd = PILES[dst];
+          if (pd.site) v += this.finishBonus(n);
           const time = this.travel(pl.x, pl.z, ps.x, ps.z) + this.travel(ps.x, ps.z, pd.x, pd.z) + n * 0.13 + 0.6;
           cand({ k: 'pick', id: src, x: ps.x, z: ps.z, dst }, v, time);
         }
@@ -185,9 +207,13 @@ class Bot {
         if (st === 2) { grown++; if (d < td) { td = d; ti = i; } }
         if (st === 0) { empty++; if (d < ed) { ed = d; ei = i; } }
       }
-      const logV = Math.max(this.itemValue('log', 'saw1_in'), 1);
-      if (ti >= 0 && free >= 2) {
-        const n = Math.min(free, grown * 2);
+      // бревно стоит столько, сколько даст лучшее открытое место, куда его можно положить; класть некуда — не рубим
+      // (иначе рубил бы без конца и выбрасывал: вход пилорамы полон)
+      let logV = 0, room = 0;
+      for (const id of drops) { const sp = g.space(id, 'log'); if (sp > 0) { room += sp; logV = Math.max(logV, this.itemValue('log', id)); } }
+      logV = Math.max(logV, 1);
+      if (ti >= 0 && free >= 2 && room >= 2) {
+        const n = Math.min(free, grown * 2, room);
         cand({ k: 'chop', i: ti, x: PLOTS[ti].x, z: PLOTS[ti].z }, n * logV, this.travel(pl.x, pl.z, PLOTS[ti].x, PLOTS[ti].z) + (n / 2) * (g.uv('u_chop') + 0.6) + 8);
       }
       const foresters = g.workers.some((w) => w.role === 'forester' && w.on);
@@ -272,6 +298,7 @@ class Bot {
         }
         break;
       case 'drop':
+        if (t.id === 'site') this.lastSite = g.s.playT;   // отнёс на стройку — следующую партию снова продаёт
         if (t.quiet > 0.3 || !pl.stack.length) this.task = null;
         break;
       case 'collect':

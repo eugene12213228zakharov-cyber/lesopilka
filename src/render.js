@@ -1188,7 +1188,8 @@ class View {
       if (!cap) continue;
       const full = total >= cap;
       const hy = p.shelf ? 2.3 : 1.6;
-      this.labels.set('cnt' + id, p.x, hy, p.z + p.d / 2, `${fmtNum(total)}/${fmtNum(cap)}`, 'cnt' + (full ? ' full' : ''));
+      const ord = id === 'yard' ? ` · заказ ${g.s.logOrder || 0}` : '';   // склад брёвен: сколько везёт лесовоз
+      this.labels.set('cnt' + id, p.x, hy, p.z + p.d / 2, `${fmtNum(total)}/${fmtNum(cap)}${ord}`, 'cnt' + (full ? ' full' : ''));
     }
     // названия станков рядом
     for (const id of g.stOn) {
@@ -1234,6 +1235,7 @@ class View {
     if (!goal) return null;
     const t = goal.target;
     if (t.startsWith('pad:')) { const p = PAD_BY_ID[t.slice(4)]; return p && this.g.padVisible(p) ? [p.x, p.z] : null; }
+    if (t.startsWith('plot:')) { const q = PLOTS[+t.slice(5)]; return q ? [q.x, q.z] : null; }
     const p = PILES[t];
     return p ? [p.x, p.z] : null;
   }

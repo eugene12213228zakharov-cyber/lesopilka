@@ -105,6 +105,6 @@ if (g.s.floor < FLOORS.length) {
   console.log('\nЗАСТРЯЛ. Кучи:', JSON.stringify(g.s.piles));
   console.log('рабочие:', g.workers.map((w) => (w.route || w.role) + ':' + w.task + ':' + w.stack.length).join(' '));
   console.log('бот:', JSON.stringify(bot.task), 'игрок', g.pl.x.toFixed(1), g.pl.z.toFixed(1), 'в руках', g.pl.stack.join(','));
-  console.log('покупатели:', g.cust.map((c) => c.kind + ':' + c.state + ':' + c.x.toFixed(0) + ',' + c.z.toFixed(0)).join(' '), 'места', g.spots.map((s) => (s ? 1 : 0)).join(''));
+  console.log('покупатели:', g.cust.map((c) => c.kind + ':' + c.state + ':' + c.x.toFixed(0) + ',' + c.z.toFixed(0)).join(' '), 'места', g.stalls.map((st) => st.spots.map((x) => (x ? 1 : 0)).join('')).join(' | '));
   console.log('деньги в кассах:', JSON.stringify(g.s.cash), 'стройка', JSON.stringify(g.s.floorGot));
 }

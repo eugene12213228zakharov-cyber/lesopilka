@@ -4,7 +4,8 @@
 
 const NAV_CELL = 0.5;
 const TRIG_CELL = 0.5;
-const SAVE_VERSION = 1;
+// 2 — начало с делянки и закупка брёвен (30.09.2026): старые сохранения не подходят, игра начинается заново
+const SAVE_VERSION = 2;
 
 // ───────── дороги: маршруты машин ─────────
 // Путь — ломаная с накопленной длиной cum; повороты скруглены дугами, на дуге своя предельная скорость.
@@ -90,11 +91,9 @@ class Game {
     this.cust = [];
     this.queue = [];
     this.trucks = [];
-    this.spots = C1_SPOTS.map(() => null);   // кто стоит на месте у прилавка
     this.treeRes = [];
     this.logTimer = 2;
     this.optTimer = 8;
-    this.c1Timer = 3;
     this.c4Timer = 2;
     this.pneuAcc = 0;
     this.craneAcc = 0;
@@ -103,7 +102,8 @@ class Game {
     this.soft = false;     // бот: машины его пропускают и не сбивают (прогон баланса меряет экономику, а не ловкость)
     this.loose = [];       // что выронил игрок, когда его сбила машина: лежит на земле, можно подобрать
     this.lrs = { s: 7 };   // свой генератор для разлёта — не сбивает случайные числа игры
-    this.c1q = [];         // очередь покупателей досок у входа на тротуаре
+    // места продажи досок (STALLS): таймер покупателей, очередь на тротуаре у входа, кто стоит на каком месте
+    this.stalls = STALLS.map(() => ({ timer: 3, q: [], spots: [] }));
     this.c4q = [[], []];   // очереди у двух входов в магазин
     this.load(save);
   }
@@ -116,7 +116,8 @@ class Game {
       floor: 0, floorGot: {},
       padPaid: {}, padDone: {},
       upg: {},
-      piles: { yard: { log: 12 } },
+      piles: {},
+      logOrder: 0,   // закупка брёвен: сколько везти за рейс (0 — не возить)
       cash: {},
       st: {},
       trees: PLOTS.map(() => ({ stage: 2, t: 0 })),
@@ -124,7 +125,7 @@ class Game {
       belt: [],   // что едет по конвейеру в порт: { it, d } — d, сколько метров проехало; первое — ближе к концу
       sitePriority: true,
       tut: 0,
-      stats: { made: {}, floorsT: [], zonesT: {}, sold: 0, ships: 0, buys: 0, hitMe: 0, hitW: 0 },
+      stats: { made: {}, floorsT: [], zonesT: {}, sold: 0, ships: 0, buys: 0, hitMe: 0, hitW: 0, planted: 0, logs: 0 },
       savedAt: 0,
     };
   }
@@ -139,7 +140,7 @@ class Game {
       pl = save.player; ws = save.workers || [];
     }
     this.s = s;
-    this.pl = this.agent('player', pl ? pl.x : -36, pl ? pl.z : 17);
+    this.pl = this.agent('player', pl ? pl.x : -62, pl ? pl.z : 24);   // новая игра — у леса: деревья и пилорама в кадре
     if (pl && Array.isArray(pl.stack)) this.pl.stack = pl.stack.filter((i) => ITEMS[i]);
     this.workers = [];
     for (const r of ws) if (PAD_BY_ID[r.pad] && PAD_BY_ID[r.pad].worker) this.spawnWorker(PAD_BY_ID[r.pad], r);
@@ -193,7 +194,7 @@ class Game {
 
   // ───────── что открыто ─────────
   zoneOpenCalc(zid) {
-    if (zid === 'c' || zid === 'z1') return true;
+    if (zid === 'c' || zid === START_ZONE) return true;
     return this.s.floor >= ZONE_BY_ID[zid].floor && !!this.s.padDone['p_gate_' + zid];
   }
   padOk(r) { return r.startsWith('z') ? !!this.open[r] : !!this.s.padDone[r]; }
@@ -479,6 +480,7 @@ class Game {
     if (p.worker) this.spawnWorker(p, null);
     if (p.plots) PLOTS.forEach((q, i) => { if (q.g === p.plots) this.s.trees[i] = { stage: 2, t: 0 }; });
     if (p.feature === 'dock' && !this.s.ship) this.s.ship = { state: 'away', t: 3, need: null, got: {} };
+    if (p.gate === 'z1' && !this.s.logOrder) this.s.logOrder = 10;   // открыл лесопилку — сразу увидит, как лесовоз везёт брёвна
     if (p.gate) this.s.stats.zonesT[p.gate] = Math.round(this.s.playT);
     this.rebuild();
     this.ev({ t: 'built', pad: p.id });
@@ -522,6 +524,7 @@ class Game {
       if (a.plant >= TUNE.plantTime * (a.kind === 'player' ? 1 : 1.5)) {
         a.plant = 0;
         tr.stage = 1; tr.t = 0;
+        if (a.kind === 'player') this.s.stats.planted++;
         this.ev({ t: 'plant', i });
         return true;
       }
@@ -814,7 +817,7 @@ class Game {
         const d = dist(w.x, w.z, p.x, p.z);
         if (d < bd) { bd = d; best = id; }
       }
-      if (!best) best = w.x < 20 ? 'trash1' : 'trash3';
+      if (!best) best = this.nearestTrash(w.x, w.z);
       w.dst = best; w.task = 'toDst'; this.goPile(w, best);
       return;
     }
@@ -985,9 +988,10 @@ class Game {
 
   trucksStep(dt) {
     this.logTimer -= dt;
-    if (this.logTimer <= 0 && !this.trucks.some((t) => t.kind === 'log' && t.state !== 'out')) {
+    const order = this.open.z1 ? Math.min(this.s.logOrder || 0, this.logCap()) : 0;
+    if (order > 0 && this.logTimer <= 0 && !this.trucks.some((t) => t.kind === 'log' && t.state !== 'out')) {
       this.logTimer = this.uv('u_trFreq');
-      this.trucks.push(this.newTruck('log', { load: this.uv('u_trLoad') }));
+      this.trucks.push(this.newTruck('log', { load: order }));
     }
     if (this.pileSet.has('opt')) {
       this.optTimer -= dt;
@@ -1011,11 +1015,14 @@ class Game {
     while (tr.acc >= step) {
       tr.acc -= step;
       if (tr.kind === 'log') {
-        if (tr.load > 0 && this.space('yard', 'log') > 0) {
+        const cost = this.logCost();
+        if (tr.load > 0 && this.space('yard', 'log') > 0 && this.canPay(cost)) {
           tr.load--; this.put('yard', 'log'); tr.stall = 0;
+          this.pay(cost); this.s.stats.logs = (this.s.stats.logs || 0) + 1;
           this.ev({ t: 'x', it: 'log', from: { tr }, to: { p: 'yard' } });
         } else {
           tr.stall += step;
+          if (tr.load > 0 && this.space('yard', 'log') > 0 && !tr.broke) { tr.broke = true; this.ev({ t: 'nologs' }); }   // не на что купить
           if (tr.load <= 0 || tr.stall > 1.5) { tr.state = 'out'; break; }
         }
       } else {
@@ -1216,40 +1223,55 @@ class Game {
     if (this.walkTo(c, w[0], w[1], dt, TUNE.custSpeed * 1.3)) c.wp.shift();
   }
 
-  // ───────── покупатели досок (прилавки) ─────────
-  // Лимит c1Max — на каждый прилавок, по тем, кто на лесопилке; идущие по тротуару в него не входят
+  // ───────── покупатели досок (прилавки у леса и на лесопилке) ─────────
+  // У каждого места продажи (STALLS) своя очередь: покупатели идут по тротуару (к лесу — вдоль главной дороги с востока,
+  // на лесопилку — по аллее с юга), встают на свободное место у прилавка, берут доски и платят в кассу этого прилавка.
+  // Каждый прилавок приводит своих покупателей; лимит c1Max — на прилавок, по тем, кто уже вошёл
   c1Step(dt) {
-    if (!this.open.z1) return;
-    this.c1Timer -= dt;
-    let n = 0, far = 0;
-    for (const c of this.cust) if (c.kind === 'c1') { if (c.state === 'far') far++; else if (c.state !== 'gone') n++; }
-    // каждый прилавок приводит своих покупателей: второй прилавок — вторая очередь, почти ×2 к продажам досок
-    const counters = Math.max(1, COUNTERS.filter((id) => this.pileSet.has(id)).length), max = TUNE.c1Max * counters;
-    if (this.c1Timer <= 0 && n < max && n + far < max + 4) {
-      this.c1Timer = this.uv('u_cust1') * (0.75 + 0.5 * this.rnd()) / counters;
-      const x = C1_ENTRY[0] + (this.rnd() - 0.5) * 0.8;
-      const c = this.agent('c1', x, this.farZ(x, C1_ENTRY[1]));
-      c.want = 1 + Math.floor(this.rnd() * c1Take(this.s.upg.u_cust1 || 0)); c.spot = -1; c.look = Math.floor(this.rnd() * 1000);
-      if (c.z > C1_ENTRY[1] + 0.5) { c.state = 'far'; this.c1q.push(c); } else { c.state = 'in'; n++; }
-      this.cust.push(c);
-    }
-    // очередь на тротуаре: первый входит, когда на лесопилке есть место, остальные стоят за ним
-    this.c1q = this.c1q.filter((c) => c.state === 'far' && !c.dead);
-    this.c1q.forEach((c, i) => {
-      const at = this.walkTo(c, c.x, C1_ENTRY[1] + i * 1.3, dt, TUNE.custSpeed * 1.3);
-      if (i === 0 && at && n < max) { c.state = 'in'; n++; }
-      else if (at) c.face = Math.PI;
+    STALLS.forEach((S, si) => {
+      if (!this.open[S.zone]) return;
+      const st = this.stalls[si];
+      st.timer -= dt;
+      let n = 0, far = 0;
+      for (const c of this.cust) if (c.kind === 'c1' && c.stall === si) { if (c.state === 'far') far++; else if (c.state !== 'gone') n++; }
+      const counters = Math.max(1, S.counters.filter((id) => this.pileSet.has(id)).length), max = TUNE.c1Max * counters;
+      if (st.timer <= 0 && n < max && n + far < max + 4) {
+        st.timer = this.uv('u_cust1') * (0.75 + 0.5 * this.rnd()) / counters;
+        const jit = (this.rnd() - 0.5) * 0.8, [x, z] = this.c1From(S, jit);
+        const c = this.agent('c1', x, z);
+        c.stall = si; c.want = 1 + Math.floor(this.rnd() * c1Take(this.s.upg.u_cust1 || 0)); c.spot = -1; c.look = Math.floor(this.rnd() * 1000);
+        c.jit = jit;
+        if (dist(x, z, S.entry[0] + S.dir[1] * jit, S.entry[1] + S.dir[0] * jit) > 0.5) { c.state = 'far'; st.q.push(c); } else { c.state = 'in'; n++; }
+        this.cust.push(c);
+      }
+      // очередь на тротуаре: первый входит, когда есть место, остальные стоят за ним
+      st.q = st.q.filter((c) => c.state === 'far' && !c.dead);
+      st.q.forEach((c, i) => {
+        const qx = S.entry[0] + S.dir[0] * i * 1.3 + S.dir[1] * c.jit, qz = S.entry[1] + S.dir[1] * i * 1.3 + S.dir[0] * c.jit;
+        const at = this.walkTo(c, qx, qz, dt, TUNE.custSpeed * 1.3);
+        if (i === 0 && at && n < max) { c.state = 'in'; n++; }
+        else if (at) c.face = Math.atan2(-S.dir[0], -S.dir[1]);
+      });
     });
     for (const c of this.cust) if (c.kind === 'c1') this.c1Update(c, dt);
     this.cust = this.cust.filter((c) => !c.dead);
   }
 
+  // откуда покупатель начинает путь: сразу за краем того, что видит игрок, на тротуаре; не видно или перемотка — у входа
+  c1From(S, jit) {
+    const [ex, ez] = S.entry, px = ex + S.dir[1] * jit, pz = ez + S.dir[0] * jit;
+    if (this.fast || !this.seen(ex, ez)) return [px, pz];
+    if (S.dir[1]) return [px, this.farZ(px, ez)];
+    return [Math.min(ROAD.coastX - 8, Math.max(ex, this.pl.x + 45)), pz];
+  }
+
   // свободное место у прилавка: сперва где досок хватит на всю покупку, потом где есть хоть сколько, потом любое
   c1Spot(c) {
+    const S = STALLS[c.stall], used = this.stalls[c.stall].spots;
     let best = -1, bs = -1;
-    for (let i = 0; i < C1_SPOTS.length; i++) {
-      const pile = C1_SPOTS[i][2];
-      if (this.spots[i] || !this.pileSet.has(pile)) continue;
+    for (let i = 0; i < S.spots.length; i++) {
+      const pile = S.spots[i][2];
+      if (used[i] || !this.pileSet.has(pile)) continue;
       const have = this.count(pile, 'board'), sc = have >= c.want ? 2 : have > 0 ? 1 : 0;
       if (sc > bs) { bs = sc; best = i; }
     }
@@ -1257,12 +1279,12 @@ class Game {
   }
 
   c1Update(c, dt) {
-    const sp = TUNE.custSpeed;
+    const sp = TUNE.custSpeed, S = STALLS[c.stall];
     switch (c.state) {
       case 'in': {
         const k = this.c1Spot(c);
-        if (k >= 0) { c.spot = k; this.spots[k] = c; c.state = 'walk'; this.goTo(c, C1_SPOTS[k][0], C1_SPOTS[k][1]); }
-        else if (!c.waitPos) { c.waitPos = true; this.goTo(c, -6 + (this.rnd() - 0.5) * 3, 21 + (this.rnd() - 0.5) * 3); }
+        if (k >= 0) { c.spot = k; this.stalls[c.stall].spots[k] = c; c.state = 'walk'; this.goTo(c, S.spots[k][0], S.spots[k][1]); }
+        else if (!c.waitPos) { c.waitPos = true; this.goTo(c, S.wait[0] + (this.rnd() - 0.5) * 3, S.wait[1] + (this.rnd() - 0.5) * 3); }
         else this.follow(c, dt, sp);
         break;
       }
@@ -1270,7 +1292,7 @@ class Game {
         if (this.follow(c, dt, sp)) { c.state = 'buy'; c.xacc = 0; c.wait = 0; c.face = -Math.PI / 2; }
         break;
       case 'buy': {
-        const pile = C1_SPOTS[c.spot][2];
+        const pile = S.spots[c.spot][2];
         c.xacc += dt;
         while (c.xacc >= 0.3) {
           c.xacc -= 0.3;
@@ -1283,8 +1305,8 @@ class Game {
         else { c.wait += dt; if (c.wait > 30) this.c1Leave(c, c.stack.length > 0); }
         break;
       }
-      case 'out':   // дошёл до тротуара — дальше уходит по нему на юг
-        if (this.follow(c, dt, sp)) { c.state = 'gone'; c.wp = [[c.x, ROAD.southZ - 10]]; }
+      case 'out':   // дошёл до тротуара — дальше уходит по нему туда, откуда пришёл
+        if (this.follow(c, dt, sp)) { c.state = 'gone'; c.wp = [S.dir[1] ? [c.x, ROAD.southZ - 10] : [ROAD.coastX - 8, c.z]]; }
         break;
       case 'gone':
         this.goneStep(c, dt);
@@ -1293,14 +1315,43 @@ class Game {
   }
 
   c1Leave(c, pay) {
+    const S = STALLS[c.stall];
     if (pay) {
-      const v = c.stack.length * this.price('board'), cash = c.spot >= 0 ? C1_SPOTS[c.spot][3] : 'cash1';
+      const v = c.stack.length * this.price('board'), cash = c.spot >= 0 ? S.spots[c.spot][3] : S.spots[0][3];
       this.addCash(cash, v, c.x, c.z);
       this.ev({ t: 'm', v, from: { a: c }, to: { p: cash } });
     }
-    if (c.spot >= 0) this.spots[c.spot] = null;
+    if (c.spot >= 0) this.stalls[c.stall].spots[c.spot] = null;
     c.spot = -1; c.state = 'out';
-    this.goTo(c, C1_EXIT[0] + (this.rnd() - 0.5) * 0.8, C1_EXIT[1]);
+    this.goTo(c, S.exit[0] + (this.rnd() - 0.5) * 0.8 * S.dir[1], S.exit[1] + (this.rnd() - 0.5) * 0.8 * S.dir[0]);
+  }
+
+  // ───────── закупка брёвен ─────────
+  // Лесовоз с лесопилки привозит заказанное (s.logOrder, не больше logCap) раз в u_trFreq; каждое выгруженное на склад
+  // бревно оплачивается. Платим из кармана, не хватает — из касс (как управляющий из выручки): иначе без игрока
+  // (офлайн) закупка вставала бы, ведь выручка копится в кассах
+  logCap() { return this.uv('u_trLoad'); }
+  logCost() { return TUNE.logCost; }
+  setLogOrder(n) { this.s.logOrder = clamp(Math.round(n), 0, this.logCap()); }
+  canPay(v) { return this.s.money + this.moneyInCash() >= v; }
+  pay(v) {
+    const m = Math.min(this.s.money, v);
+    this.s.money -= m; v -= m;
+    for (const id in this.s.cash) {
+      if (v <= 0) break;
+      const t = Math.min(this.s.cash[id], v);
+      this.s.cash[id] -= t; v -= t;
+    }
+  }
+  // ближайший открытый мусорный контейнер
+  nearestTrash(x, z) {
+    let best = null, bd = 1e9;
+    for (const id of this.pilesOn) {
+      if (!PILES[id].trash) continue;
+      const d = dist(x, z, PILES[id].x, PILES[id].z);
+      if (d < bd) { bd = d; best = id; }
+    }
+    return best;
   }
 
   // ───────── покупатели магазина ─────────
@@ -1629,13 +1680,17 @@ class Game {
     const s = this.s, pl = this.pl;
     const has = (it) => pl.stack.indexOf(it) >= 0;
     let g = null;
-    if (s.tut === 0) { if (has('log')) s.tut = 1; else g = ['Подойди к брёвнам — возьмёшь их', 'yard']; }
-    if (s.tut === 1) { if (this.count('saw1_in', 'log') > 0 || (s.st.saw1 && s.st.saw1.cur >= 0)) s.tut = 2; else g = ['Отнеси брёвна к пилораме', 'saw1_in']; }
-    if (s.tut === 2) { if (has('board')) s.tut = 3; else g = ['Забери доски с пилорамы', 'saw1_out']; }
-    if (s.tut === 3) { if (this.count('counter', 'board') > 0 || (s.cash.cash1 || 0) > 0 || s.earned > 0) s.tut = 4; else g = ['Положи доски на прилавок — их купят', 'counter']; }
-    if (s.tut === 4) { if (s.earned > 0) s.tut = 5; else g = ['Собери деньги у прилавка', 'cash1']; }
-    if (s.tut === 5) { if (s.stats.buys > 0) s.tut = 6; else g = ['Накопи ' + fmtMoney(PAD_BY_ID.p_wlog1.cost) + ' и встань на площадку «Грузчик брёвен»', 'pad:p_wlog1']; }
-    if (s.tut === 6) { if (s.floor >= 1) s.tut = 7; else g = ['Отнеси доски на стройку небоскрёба', 'site']; }
+    // начало — у леса: срубить, распилить, продать, посадить новое, нанять вальщика, отнести доски на стройку
+    const tree = (stage) => { const i = this.nearestTree(pl, stage); return i >= 0 ? 'plot:' + i : null; };
+    if (s.tut === 0) { if (has('log')) s.tut = 1; else g = ['Встань у дерева — срубишь его', tree(2)]; }
+    if (s.tut === 1) { if (this.count('saw4_in', 'log') > 0 || (s.st.saw4 && s.st.saw4.cur >= 0)) s.tut = 2; else g = ['Отнеси брёвна к пилораме', 'saw4_in']; }
+    if (s.tut === 2) { if (has('board')) s.tut = 3; else g = ['Забери доски с пилорамы', 'saw4_out']; }
+    if (s.tut === 3) { if (this.count('counter0', 'board') > 0 || (s.cash.cash0 || 0) > 0 || s.earned > 0) s.tut = 4; else g = ['Положи доски на прилавок — их купят', 'counter0']; }
+    if (s.tut === 4) { if (s.earned > 0) s.tut = 5; else g = ['Собери деньги у прилавка', 'cash0']; }
+    if (s.tut === 5) { const t = tree(0); if (!t || s.stats.planted) s.tut = 6; else g = ['Встань на пень — посадишь новое дерево', t]; }
+    if (s.tut === 6) { if (s.stats.buys > 0) s.tut = 7; else g = ['Накопи ' + fmtMoney(PAD_BY_ID.p_lumber1.cost) + ' и встань на площадку «Вальщик»', 'pad:p_lumber1']; }
+    if (s.tut === 7) { if (s.floor >= 1) s.tut = 8; else g = ['Отнеси доски на стройку небоскрёба', 'site']; }
+    if (g && !g[1]) g = null;
     if (!g) g = this.freeGoal();
     this.goal = g ? { text: g[0], target: g[1] } : null;
   }

@@ -51,7 +51,11 @@ class UI {
       if (this.panel) this.render();
     } else if (e.t === 'zone') {
       this.toast('🎉 Новая зона: <b>' + ZONE_BY_ID[e.id].name + '</b>', 'big');
+      if (e.id === 'z1') this.toast('🚚 Брёвна на лесопилку везёт лесовоз — за деньги. Сколько за рейс — «Улучшения» → «Закупка брёвен»');
       if (this.panel) this.render();
+    } else if (e.t === 'nologs') {
+      const now = performance.now();   // не чаще раза в 20 с
+      if (now - (this.noLogT || 0) > 20000) { this.noLogT = now; this.toast('🚚 Не хватило денег на брёвна — лесовоз уехал', 'bad'); }
     } else if (e.t === 'floor') {
       let txt = `🏢 Построен ${e.n}-й этаж! Цены ×${FLOOR_BONUS}`;
       const z = ZONES.find((zz) => zz.floor === e.n);
@@ -165,6 +169,11 @@ class UI {
         const ups = UPGRADES.filter((u) => u.zone === z.id && g.upgOpen(u));
         if (!ups.length) continue;
         h += `<div class="sec">${z.name}</div>`;
+        // лесопилка: заказ брёвен — сколько везти за рейс (выгруженное на склад оплачивается)
+        if (z.id === 'z1') {
+          h += '<div class="urow order"><div class="un"><div class="nm">🚚 Закупка брёвен</div><div class="vv" id="ordInfo"></div></div>' +
+            '<button class="step" data-order="-1">−</button><b id="ordN"></b><button class="step" data-order="1">+</button></div>';
+        }
         for (const u of ups) {
           h += `<div class="urow" data-row="${u.id}"><div class="un"><div class="nm">${u.name}</div><div class="lv"></div><div class="vv"></div></div>` +
             `<button class="buy" data-upg="${u.id}"></button></div>`;
@@ -253,6 +262,12 @@ class UI {
         if (max) { b.textContent = 'МАКС'; b.disabled = true; b.classList.remove('ok'); }
         else { const c = u.cost(l); b.textContent = fmtMoney(c); b.disabled = s.money < c; b.classList.toggle('ok', s.money >= c); }
       }
+      if ($('ordN')) {
+        const n = s.logOrder || 0;
+        $('ordN').textContent = n;
+        $('ordInfo').textContent = n ? `${n} брёвен за рейс · ${fmtMoney(n * g.logCost())} · лесовоз раз в ${g.uv('u_trFreq').toFixed(0)} с`
+          : 'не возить · до ' + g.logCap() + ' брёвен за рейс';
+      }
     } else if (this.panel === 'work') {
       g.workers.forEach((w, i) => {
         const row = body.querySelector(`[data-row="w${i}"]`);
@@ -274,6 +289,14 @@ class UI {
     if (t.dataset.upg) { if (g.buyUpgrade(t.dataset.upg)) this.audio.play('upg'); this.refresh(); }
     else if (t.dataset.w !== undefined) { const w = g.workers[+t.dataset.w]; w.on = !w.on; this.refresh(); }
     else if (t.dataset.show !== undefined) { if (this.view) this.view.focusOn(g.workers[+t.dataset.show]); }
+    else if (t.dataset.order !== undefined) {   // закупка брёвен: следующий шаг вверх или вниз, не больше, чем берёт лесовоз
+      const cur = g.s.logOrder || 0, up = +t.dataset.order > 0, cap = g.logCap();
+      const steps = LOG_ORDER_STEPS.filter((v) => v <= cap);
+      const next = up ? steps.find((v) => v > cur) : steps.slice().reverse().find((v) => v < cur);
+      if (next !== undefined) g.setLogOrder(next);
+      else if (up && cur < cap) g.setLogOrder(cap);
+      this.refresh();
+    }
     else if (t.dataset.prio !== undefined) { g.s.sitePriority = t.checked; }
     else if (t.dataset.act === 'sound') { this.audio.toggle(); this.render(); }
     else if (t.dataset.act === 'feedback') this.feedback();
@@ -295,9 +318,18 @@ class UI {
       (made ? `<p class="small">${made}</p>` : '') + '<button data-close>Отлично</button>');
   }
 
+  // сохранение прошлой версии игра не принимает (другое начало) — объясняем, а не молча начинаем заново
+  showReset() {
+    this.modal('<h2>🌲 Большое обновление</h2>' +
+      '<p>Игра теперь начинается <b>в лесу</b>: сами растим и рубим деревья, пилим доски у леса и продаём их тут же. ' +
+      'Лесопилка откроется позже — брёвна туда возит лесовоз, а за них надо платить.</p>' +
+      '<p class="small">Прогресс прошлой версии не переносится — начинаем заново. Спасибо, что играешь!</p>' +
+      '<button data-close>Начать</button>');
+  }
+
   showWelcome() {
     this.modal('<h2>🪵 Лесопилка</h2>' +
-      '<p>Цель — построить <b>деревянный небоскрёб в 20 этажей</b>. Для этого пили брёвна, делай мебель, открывай новые цеха и нанимай рабочих.</p>' +
+      '<p>Цель — построить <b>деревянный небоскрёб в 20 этажей</b>. Руби лес, пили доски, делай мебель, открывай новые цеха и нанимай рабочих.</p>' +
       '<p class="small"><b>Управление:</b> зажми мышь и тяни — человечек бежит туда (или WASD / стрелки). ' +
       'Встал на площадку — предметы и деньги перетекают сами. Жёлтая площадка с ценой — покупка.</p>' +
       '<p class="small">Прогресс сохраняется сам. Пока тебя нет, цеха с рабочими работают (до часа). Звук выключен — M.</p>' +

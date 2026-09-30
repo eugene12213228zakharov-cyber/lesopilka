@@ -25,10 +25,12 @@ const ITEMS = {
 
 // ───────── Зоны ─────────
 // floor — после какого этажа небоскрёба открывается; opens — что даёт (подпись на площадке участка);
-// helmet — цвет каски у рабочих этой зоны: в толпе видно, кто откуда
+// helmet — цвет каски у рабочих этой зоны: в толпе видно, кто откуда.
+// Игра начинается на делянке: растим и рубим лес сами, пилорама и прилавок — у леса. Лесопилка с закупкой брёвен — потом
+const START_ZONE = 'z2';
 const ZONES = [
-  { id: 'z1', name: 'Лесопилка',         rect: { x0: -46, z0: 6,  x1: -6, z1: 38 }, floor: 0, helmet: 0xffd43b },
-  { id: 'z2', name: 'Делянка',           rect: { x0: -80, z0: 6,  x1: -50, z1: 46 }, floor: 2, helmet: 0x58c25e, opens: 'свой лес и пилорама у леса' },
+  { id: 'z2', name: 'Делянка',           rect: { x0: -80, z0: 6,  x1: -50, z1: 46 }, floor: 0, helmet: 0x58c25e },
+  { id: 'z1', name: 'Лесопилка',         rect: { x0: -46, z0: 6,  x1: -6, z1: 38 }, floor: 2, helmet: 0xffd43b, opens: 'брёвна лесовозом за деньги, пилорамы, прилавки' },
   { id: 'z3', name: 'Столярка',          rect: { x0: 6,   z0: 6,  x1: 50, z1: 38 }, floor: 4, helmet: 0x3d8bfd, opens: 'брус, ножки, щиты, мебель' },
   { id: 'z4', name: 'Мебельный магазин', rect: { x0: 6,   z0: 44, x1: 50, z1: 72 }, floor: 7, helmet: 0xb07cff, opens: 'витрины и покупатели мебели' },
   { id: 'z5', name: 'Бумажный цех',      rect: { x0: -46, z0: 44, x1: -6, z1: 72 }, floor: 10, helmet: 0x27c1c9, labelTop: true, opens: 'коробки: мебель в коробке дороже' },
@@ -63,6 +65,8 @@ const SAW = [{ in: { log: 1 }, out: { board: 2 }, by: { sawdust: 1 }, t: 3.4 }];
 
 // ── z1 Лесопилка ──
 addPile('yard', { zone: 'z1', x: -40, z: 11, w: 4, d: 4, mode: 'pick', accepts: { log: 30 }, name: 'Склад брёвен' });
+// закупка брёвен: сколько везти за рейс (не больше, чем берёт лесовоз, — «Лесовоз: больше брёвен за рейс»)
+const LOG_ORDER_STEPS = [0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 machine('saw1', 'z1', 'saw', 'Пилорама', -28, 12, SAW, { speed: 'u_saw', dust: true, inCap: { log: 12 }, outCap: { board: 40 } });
 machine('saw2', 'z1', 'saw', 'Пилорама №2', -28, 21, SAW, { speed: 'u_saw', dust: true, pad: 'p_saw2', inCap: { log: 12 }, outCap: { board: 40 } });
 machine('saw3', 'z1', 'saw', 'Пилорама №3', -28, 30, SAW, { speed: 'u_saw', dust: true, pad: 'p_saw3', inCap: { log: 12 }, outCap: { board: 40 } });
@@ -74,15 +78,6 @@ PROPS.push({ id: 'stall', type: 'stall', zone: 'z1', x: -12, z: 16, w: 1.6, d: 6
 addPile('counter2', { zone: 'z1', x: -15.2, z: 27, w: 2.4, d: 4, mode: 'drop', pad: 'p_counter2', accepts: { board: 40 }, name: 'Прилавок №2', sell: true });
 addPile('cash1b', { zone: 'z1', x: -15.2, z: 32.4, w: 2.4, d: 2, money: true, pad: 'p_counter2', name: 'касса прилавка №2' });
 PROPS.push({ id: 'stall2', type: 'stall', zone: 'z1', pad: 'p_counter2', x: -12, z: 27, w: 1.6, d: 6 });
-// места покупателей: x, z, у какого прилавка, в какую кассу
-const C1_SPOTS = [
-  [-10.1, 14, 'counter', 'cash1'], [-10.1, 16, 'counter', 'cash1'], [-10.1, 18, 'counter', 'cash1'],
-  [-10.1, 25, 'counter2', 'cash1b'], [-10.1, 27, 'counter2', 'cash1b'], [-10.1, 29, 'counter2', 'cash1b'],
-];
-const COUNTERS = ['counter', 'counter2'];
-// покупатели досок приходят по тротуару вдоль южной дороги: здесь входят на лесопилку и отсюда уходят
-const C1_ENTRY = [-4, 30];
-const C1_EXIT = [-4, 34];
 
 // ── центр: небоскрёб ──
 addPile('site', { zone: 'c', x: 0, z: -12, w: 6, d: 2.4, mode: 'drop', site: true, name: 'Стройка' });
@@ -97,7 +92,24 @@ const PLOTS = [];
   groups.forEach((rows, g) => { for (const z of rows) for (const x of cols) PLOTS.push({ x, z, g }); });
 }
 addPile('flogs', { zone: 'z2', x: -54, z: 30, w: 3, d: 3, mode: 'pick', accepts: { log: 60 }, name: 'Брёвна с делянки' });
-machine('saw4', 'z2', 'saw', 'Пилорама у леса', -66, 12, SAW, { speed: 'u_saw', dust: true, pad: 'p_saw4', inCap: { log: 12 }, outCap: { board: 40 } });
+// первая пилорама игры — у леса; рядом прилавок: от выхода пилорамы до него 4 м — первая продажа через минуту
+machine('saw4', 'z2', 'saw', 'Пилорама у леса', -66, 12, SAW, { speed: 'u_saw', dust: true, inCap: { log: 12 }, outCap: { board: 40 } });
+addPile('counter0', { zone: 'z2', x: -57.2, z: 12, w: 2.4, d: 4, mode: 'drop', accepts: { board: 40 }, name: 'Прилавок у леса', sell: true });
+addPile('cash0', { zone: 'z2', x: -57.2, z: 17.4, w: 2.4, d: 2, money: true, name: 'касса у леса' });
+PROPS.push({ id: 'stall0', type: 'stall', zone: 'z2', x: -54, z: 12, w: 1.6, d: 6 });
+addPile('trash2', { zone: 'z2', x: -76, z: 9, w: 2, d: 2, mode: 'drop', trash: true, name: 'Мусор' });
+
+// ── покупатели досок: места продажи ──
+// spots — места у прилавков: x, z, какой прилавок, в какую кассу; entry / exit — где заходят и выходят;
+// dir — откуда идут по тротуару (у леса — с востока вдоль главной дороги, на лесопилку — с юга по аллее);
+// wait — где стоят, пока все места заняты. Каждый прилавок приводит своих покупателей
+const STALLS = [
+  { zone: 'z2', counters: ['counter0'], entry: [-51.3, 4.5], exit: [-50.3, 4.5], dir: [1, 0], wait: [-51.2, 20],
+    spots: [[-52.1, 10, 'counter0', 'cash0'], [-52.1, 12, 'counter0', 'cash0'], [-52.1, 14, 'counter0', 'cash0']] },
+  { zone: 'z1', counters: ['counter', 'counter2'], entry: [-4, 30], exit: [-4, 34], dir: [0, 1], wait: [-6, 21],
+    spots: [[-10.1, 14, 'counter', 'cash1'], [-10.1, 16, 'counter', 'cash1'], [-10.1, 18, 'counter', 'cash1'],
+      [-10.1, 25, 'counter2', 'cash1b'], [-10.1, 27, 'counter2', 'cash1b'], [-10.1, 29, 'counter2', 'cash1b']] },
+];
 
 // ── z3 Столярка ──
 // Все станки столярки дают опилки (стружку): чем больше мебели, тем больше опилок на коробки для неё.
@@ -220,7 +232,8 @@ const PACKED_OUT = ['packer_out', 'packer2_out'];
 const ROUTES = {
   logs:     { name: 'Грузчик брёвен', from: ['yard', 'flogs'], to: ['saw1_in', 'saw2_in', 'saw3_in'], hint: 'брёвна со склада → пилорамы' },
   // excess — забирать только излишки: когда выход станка заполнен больше чем на эту долю
-  boards:   { name: 'Продавец досок', from: SAWS_OUT, to: COUNTERS, excess: 0.5, hint: 'лишние доски с пилорам → прилавки' },
+  boards:   { name: 'Продавец досок', from: SAWS_OUT, to: ['counter', 'counter2'], excess: 0.5, hint: 'лишние доски с пилорам → прилавки' },
+  fboards:  { name: 'Продавец досок', from: ['saw4_out'], to: ['counter0'], excess: 0.5, hint: 'лишние доски с пилорамы → прилавок у леса' },
   tractor:  { name: 'Тракторист', from: ['flogs'], to: SAWS_IN, hint: 'брёвна с делянки → пилорамы' },
   jlogs:    { name: 'Грузчик брёвен', from: ['yard', 'flogs'], to: ['beamer1_in', 'beamer2_in'], hint: 'брёвна → брусовальные станки' },
   jboards:  { name: 'Грузчик досок', from: SAWS_OUT, to: ['press1_in', 'press2_in', 'benchC_in'], hint: 'доски с пилорам → прессы и верстак стульев' },
@@ -249,36 +262,36 @@ const ROLE_HINTS = {
 // station — строит станок; worker — нанимает; feature — включает механику; plots — расширяет делянку
 // req — какие площадки должны быть открыты раньше
 const PADS = [
-  // участки: зона открывается этажом небоскрёба И покупкой участка у входа
-  { id: 'p_gate_z2', zone: 'c', x: -48, z: 24,   cost: 2000,  gate: 'z2', minFloor: 2 },
+  // участки: зона открывается этажом небоскрёба И покупкой участка у входа (делянка открыта с начала)
+  { id: 'p_gate_z1', zone: 'c', x: -48, z: 24,   cost: 1200,  gate: 'z1', minFloor: 2 },
   { id: 'p_gate_z3', zone: 'c', x: 3.8, z: 21,   cost: 6000,  gate: 'z3', minFloor: 4 },
   { id: 'p_gate_z4', zone: 'c', x: 28,  z: 41.6, cost: 25000, gate: 'z4', minFloor: 7 },
   { id: 'p_gate_z5', zone: 'c', x: -26, z: 41.6, cost: 100000, gate: 'z5', minFloor: 10 },
   { id: 'p_gate_z6', zone: 'c', x: 53,  z: 28,   cost: 1.2e6, gate: 'z6', minFloor: 13 },
-  // z1
-  { id: 'p_wlog1',  zone: 'z1', x: -40, z: 19,  cost: 120,    worker: { route: 'logs' } },
-  { id: 'p_saw2',   zone: 'z1', station: 'saw2', cost: 280 },
-  { id: 'p_wbrd1',  zone: 'z1', x: -20, z: 29,  cost: 450,    worker: { route: 'boards' }, req: ['p_wlog1'] },
-  { id: 'p_saw3',   zone: 'z1', station: 'saw3', cost: 1400,  req: ['p_saw2'] },
-  { id: 'p_wlog2',  zone: 'z1', x: -40, z: 25,  cost: 2400,   worker: { route: 'logs' }, req: ['p_saw3', 'p_wlog1'] },
-  { id: 'p_counter2', zone: 'z1', x: -15.2, z: 29.2, w: 2.4, d: 8.4, cost: 4000, feature: 'counter2', req: ['p_wbrd1'] },
-  { id: 'p_wbrd2',  zone: 'z1', x: -20, z: 34,  cost: 3600,   worker: { route: 'boards' }, req: ['p_saw3', 'p_wbrd1'] },
+  // z2 — начало игры: вальщик, продавец досок, лесник, тракторист, новые делянки
+  { id: 'p_lumber1',   zone: 'z2', x: -54, z: 36,   cost: 120,   worker: { role: 'lumberjack' } },
+  { id: 'p_wbrd0',     zone: 'z2', x: -60, z: 17.5, cost: 280,   worker: { route: 'fboards' }, req: ['p_lumber1'] },
+  { id: 'p_forester1', zone: 'z2', x: -54, z: 24,   cost: 450,   worker: { role: 'forester' }, req: ['p_lumber1'] },
+  { id: 'p_tractor1',  zone: 'z2', x: -58, z: 8,    cost: 900,   worker: { route: 'tractor' }, req: ['p_lumber1'] },
+  { id: 'p_plots2',    zone: 'z2', x: -68, z: 40,   cost: 1400,  plots: 1, req: ['p_forester1'] },
+  { id: 'p_lumber2',   zone: 'z2', x: -54, z: 41,   cost: 2400,  worker: { role: 'lumberjack' }, req: ['p_plots2'] },
+  { id: 'p_forester2', zone: 'z2', x: -54, z: 19,   cost: 3600,  worker: { role: 'forester' }, req: ['p_plots2'] },
+  { id: 'p_plots3',    zone: 'z2', x: -68, z: 24,   cost: 5000,  plots: 2, req: ['p_lumber2'] },
+  { id: 'p_tractor2',  zone: 'z2', x: -62, z: 8,    cost: 8000,  worker: { route: 'tractor' }, req: ['p_tractor1', 'p_plots3'] },
+  { id: 'p_lumber3',   zone: 'z2', x: -62, z: 44.8, cost: 12000, worker: { role: 'lumberjack' }, req: ['p_plots3'] },
+  // z1 — лесопилка: брёвна лесовозом за деньги (заказ — в «Улучшениях»), пилорамы, прилавки
+  { id: 'p_wlog1',  zone: 'z1', x: -40, z: 19,  cost: 1000,   worker: { route: 'logs' } },
+  { id: 'p_saw2',   zone: 'z1', station: 'saw2', cost: 1500 },
+  { id: 'p_wbrd1',  zone: 'z1', x: -20, z: 29,  cost: 1800,   worker: { route: 'boards' }, req: ['p_wlog1'] },
+  { id: 'p_saw3',   zone: 'z1', station: 'saw3', cost: 3000,  req: ['p_saw2'] },
+  { id: 'p_wlog2',  zone: 'z1', x: -40, z: 25,  cost: 4000,   worker: { route: 'logs' }, req: ['p_saw3', 'p_wlog1'] },
+  { id: 'p_counter2', zone: 'z1', x: -15.2, z: 29.2, w: 2.4, d: 8.4, cost: 5000, feature: 'counter2', req: ['p_wbrd1'] },
+  { id: 'p_wbrd2',  zone: 'z1', x: -20, z: 34,  cost: 6000,   worker: { route: 'boards' }, req: ['p_saw3', 'p_wbrd1'] },
   // центр
   { id: 'p_build1', zone: 'c', x: -9, z: -12,   cost: 9000,   worker: { role: 'builder' }, req: ['z3'] },
   { id: 'p_build2', zone: 'c', x: 9,  z: -12,   cost: 60000,  worker: { role: 'builder' }, req: ['p_build1', 'z4'] },
   { id: 'p_build3', zone: 'c', x: -13, z: -16,  cost: 400000, worker: { role: 'builder' }, req: ['p_build2', 'z5'] },
   { id: 'p_build4', zone: 'c', x: 13, z: -16,   cost: 2.5e6,  worker: { role: 'builder' }, req: ['p_build3', 'z6'] },
-  // z2
-  { id: 'p_lumber1',   zone: 'z2', x: -54, z: 36, cost: 1500,  worker: { role: 'lumberjack' } },
-  { id: 'p_forester1', zone: 'z2', x: -54, z: 24, cost: 1800,  worker: { role: 'forester' } },
-  { id: 'p_tractor1',  zone: 'z2', x: -58, z: 8,  cost: 2600,  worker: { route: 'tractor' }, req: ['p_lumber1'] },
-  { id: 'p_saw4',      zone: 'z2', station: 'saw4', cost: 4200, req: ['p_lumber1'] },
-  { id: 'p_plots2',    zone: 'z2', x: -68, z: 40, cost: 5000,  plots: 1, req: ['p_forester1'] },
-  { id: 'p_lumber2',   zone: 'z2', x: -54, z: 41, cost: 8000,  worker: { role: 'lumberjack' }, req: ['p_plots2'] },
-  { id: 'p_forester2', zone: 'z2', x: -54, z: 19, cost: 8000,  worker: { role: 'forester' }, req: ['p_plots2'] },
-  { id: 'p_plots3',    zone: 'z2', x: -68, z: 24, cost: 16000, plots: 2, req: ['p_lumber2'] },
-  { id: 'p_tractor2',  zone: 'z2', x: -54, z: 8,  cost: 20000, worker: { route: 'tractor' }, req: ['p_tractor1', 'p_plots3'] },
-  { id: 'p_lumber3',   zone: 'z2', x: -54, z: 14, cost: 30000, worker: { role: 'lumberjack' }, req: ['p_plots3'] },
   // z3
   { id: 'p_beamer1', zone: 'z3', station: 'beamer1', cost: 2000 },
   { id: 'p_opt',     zone: 'z3', x: 47.8, z: 12.4, cost: 1000, feature: 'opt', w: 2.4, d: 10.4 },
@@ -412,18 +425,19 @@ function geo(base, k) { return (l) => Math.round(base * Math.pow(k, l)); }
 // почти ничего не давали — места у прилавков и так заняты, чаще приходить некуда
 function c1Take(l) { return 3 + Math.max(0, l - 4); }
 const UPGRADES = [
-  { id: 'u_cap',    zone: 'z1', name: 'Руки: вместимость',   max: 12, cost: geo(30, 1.62),   v: (l) => 6 + 2 * l, fmt: (v) => v + ' шт.' },
-  { id: 'u_speed',  zone: 'z1', name: 'Бег: скорость',        max: 8,  cost: geo(45, 1.8),    v: (l) => 5 + 0.4 * l, fmt: (v) => v.toFixed(1) + ' м/с' },
-  { id: 'u_saw',    zone: 'z1', name: 'Пилорамы: скорость',   max: 10, cost: geo(60, 1.62),   v: (l) => Math.pow(0.87, l), fmt: (v) => (3.4 * v).toFixed(1) + ' с' },
-  { id: 'u_trFreq', zone: 'z1', name: 'Лесовозы: чаще',       max: 8,  cost: geo(70, 1.7),    v: (l) => 15 * Math.pow(0.86, l), fmt: (v) => 'раз в ' + v.toFixed(1) + ' с' },
-  { id: 'u_trLoad', zone: 'z1', name: 'Лесовозы: больше брёвен', max: 8, cost: geo(90, 1.7), v: (l) => 6 + 2 * l, fmt: (v) => v + ' шт.' },
-  { id: 'u_yard',   zone: 'z1', name: 'Склад брёвен: больше', max: 5,  cost: geo(150, 1.9),   v: (l) => 30 + 15 * l, fmt: (v) => v + ' шт.' },
+  { id: 'u_cap',    zone: 'z2', name: 'Руки: вместимость',   max: 12, cost: geo(30, 1.62),   v: (l) => 6 + 2 * l, fmt: (v) => v + ' шт.' },
+  { id: 'u_speed',  zone: 'z2', name: 'Бег: скорость',        max: 8,  cost: geo(45, 1.8),    v: (l) => 5 + 0.4 * l, fmt: (v) => v.toFixed(1) + ' м/с' },
+  { id: 'u_saw',    zone: 'z2', name: 'Пилорамы: скорость',   max: 10, cost: geo(60, 1.62),   v: (l) => Math.pow(0.87, l), fmt: (v) => (3.4 * v).toFixed(1) + ' с' },
+  { id: 'u_trFreq', zone: 'z1', name: 'Лесовоз: чаще',        max: 8,  cost: geo(500, 1.7),   v: (l) => 15 * Math.pow(0.86, l), fmt: (v) => 'раз в ' + v.toFixed(1) + ' с' },
+  // сколько брёвен можно заказать за рейс (сам заказ — строкой «Закупка брёвен» в «Улучшениях»)
+  { id: 'u_trLoad', zone: 'z1', name: 'Лесовоз: больше брёвен за рейс', max: 8, cost: geo(600, 1.7), v: (l) => 20 + 10 * l, fmt: (v) => 'до ' + v + ' шт.' },
+  { id: 'u_yard',   zone: 'z1', name: 'Склад брёвен: больше', max: 5,  cost: geo(800, 1.9),   v: (l) => 30 + 15 * l, fmt: (v) => v + ' шт.' },
   // выходы всех станков: пилы дольше работают, пока доски не разобрали, — и дольше дают опилки
-  { id: 'u_store',  zone: 'z1', name: 'Склады у станков: больше', max: 4, cost: geo(4000, 3), v: (l) => 1 + 0.5 * l, fmt: (v) => '×' + v.toFixed(1) + ' к выходу' },
-  { id: 'u_bPrice', zone: 'z1', name: 'Доски: цена',          max: 8,  cost: geo(120, 1.85),  v: (l) => Math.pow(1.2, l), fmt: (v) => '×' + v.toFixed(1) },
-  { id: 'u_cust1',  zone: 'z1', name: 'Покупатели досок: чаще и больше', max: 8, cost: geo(80, 1.7), v: (l) => 3.2 * Math.pow(0.85, l), fmt: (v, l) => 'раз в ' + v.toFixed(1) + ' с, до ' + c1Take(l) + ' шт.' },
-  { id: 'u_wSpeed', zone: 'z1', name: 'Рабочие: скорость',    max: 10, cost: geo(400, 1.75),  v: (l) => 3 * (1 + 0.1 * l), fmt: (v) => v.toFixed(1) + ' м/с' },
-  { id: 'u_wCap',   zone: 'z1', name: 'Рабочие: вместимость', max: 10, cost: geo(400, 1.75),  v: (l) => 4 + 2 * l, fmt: (v) => v + ' шт.' },
+  { id: 'u_store',  zone: 'z2', name: 'Склады у станков: больше', max: 4, cost: geo(4000, 3), v: (l) => 1 + 0.5 * l, fmt: (v) => '×' + v.toFixed(1) + ' к выходу' },
+  { id: 'u_bPrice', zone: 'z2', name: 'Доски: цена',          max: 8,  cost: geo(120, 1.85),  v: (l) => Math.pow(1.2, l), fmt: (v) => '×' + v.toFixed(1) },
+  { id: 'u_cust1',  zone: 'z2', name: 'Покупатели досок: чаще и больше', max: 8, cost: geo(80, 1.7), v: (l) => 3.2 * Math.pow(0.85, l), fmt: (v, l) => 'раз в ' + v.toFixed(1) + ' с, до ' + c1Take(l) + ' шт.' },
+  { id: 'u_wSpeed', zone: 'z2', name: 'Рабочие: скорость',    max: 10, cost: geo(400, 1.75),  v: (l) => 3 * (1 + 0.1 * l), fmt: (v) => v.toFixed(1) + ' м/с' },
+  { id: 'u_wCap',   zone: 'z2', name: 'Рабочие: вместимость', max: 10, cost: geo(400, 1.75),  v: (l) => 4 + 2 * l, fmt: (v) => v + ' шт.' },
   { id: 'u_grow',   zone: 'z2', name: 'Лес: растёт быстрее',  max: 8,  cost: geo(1200, 1.7),  v: (l) => 40 * Math.pow(0.85, l), fmt: (v) => v.toFixed(0) + ' с' },
   { id: 'u_chop',   zone: 'z2', name: 'Рубка: быстрее',       max: 6,  cost: geo(1500, 1.8),  v: (l) => 1.6 * Math.pow(0.85, l), fmt: (v) => v.toFixed(1) + ' с' },
   { id: 'u_join',   zone: 'z3', name: 'Станки столярки: скорость', max: 12, cost: geo(3000, 1.6), v: (l) => Math.pow(0.87, l), fmt: (v) => '×' + (1 / v).toFixed(1) },
@@ -451,7 +465,7 @@ for (const u of UPGRADES) UPG_BY_ID[u.id] = u;
 // need — что сдать на стройку; unlock — какая зона открывается
 const FLOORS = [
   { need: { board: 20 } },
-  { need: { board: 50 }, unlock: 'z2' },
+  { need: { board: 50 }, unlock: 'z1' },
   { need: { board: 100 } },
   { need: { board: 160 }, unlock: 'z3' },
   { need: { board: 150, beam: 40 } },
@@ -496,6 +510,7 @@ const TUNE = {
   truckAcc: 5,          // разгон и торможение машин, м/с²; маршруты — TRUCK_PATHS в sim.js
   truckBrake: 10,
   logTruckStopX: -40,
+  logCost: 1.5,         // бревно у поставщика — за штуку (выгружено на склад — оплачено)
   optTruckStopX: 47.8,
   looseLife: 60,        // сколько лежит на земле то, что выронил игрок, когда его сбила машина
   emptyRun: 1.25,       // игрок с пустыми руками бежит быстрее
