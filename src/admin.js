@@ -116,7 +116,7 @@ class Admin {
         }
         break;
       }
-      case 'maxUpg': for (const u of UPGRADES) if (g.open[u.zone]) g.s.upg[u.id] = u.max; break;
+      case 'maxUpg': for (const u of UPGRADES) if (g.upgOpen(u)) g.s.upg[u.id] = u.max; break;
       case 'speed': this.h.setSpeed(+v); break;
       case 'offline': this.h.catchUp(3600, true); break;
       case 'tp': this.teleport(v); break;

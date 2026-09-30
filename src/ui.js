@@ -103,7 +103,7 @@ class UI {
       $('cashHint').textContent = inCash >= 1 ? 'в кассах ещё ' + fmtMoney(inCash) : '';
       // сколько улучшений по карману — значок на кнопке
       let can = 0;
-      for (const u of UPGRADES) { const l = s.upg[u.id] || 0; if (g.open[u.zone] && l < u.max && u.cost(l) <= s.money) can++; }
+      for (const u of UPGRADES) { const l = s.upg[u.id] || 0; if (g.upgOpen(u) && l < u.max && u.cost(l) <= s.money) can++; }
       $('upgBadge').textContent = can || '';
       $('upgBadge').style.display = can ? '' : 'none';
       $('bUpg').classList.toggle('hot', can > 0);
@@ -162,7 +162,7 @@ class UI {
     if (this.panel === 'upg') {
       for (const z of ZONES) {
         if (!g.open[z.id]) continue;
-        const ups = UPGRADES.filter((u) => u.zone === z.id);
+        const ups = UPGRADES.filter((u) => u.zone === z.id && g.upgOpen(u));
         if (!ups.length) continue;
         h += `<div class="sec">${z.name}</div>`;
         for (const u of ups) {
@@ -248,7 +248,7 @@ class UI {
         const u = UPG_BY_ID[row.dataset.row], l = s.upg[u.id] || 0;
         const max = l >= u.max;
         row.querySelector('.lv').innerHTML = '●'.repeat(l) + '<span>' + '○'.repeat(u.max - l) + '</span>';
-        row.querySelector('.vv').textContent = max ? u.fmt(u.v(l)) + ' — максимум' : u.fmt(u.v(l)) + ' → ' + u.fmt(u.v(l + 1));
+        row.querySelector('.vv').textContent = max ? u.fmt(u.v(l), l) + ' — максимум' : u.fmt(u.v(l), l) + ' → ' + u.fmt(u.v(l + 1), l + 1);
         const b = row.querySelector('.buy');
         if (max) { b.textContent = 'МАКС'; b.disabled = true; b.classList.remove('ok'); }
         else { const c = u.cost(l); b.textContent = fmtMoney(c); b.disabled = s.money < c; b.classList.toggle('ok', s.money >= c); }

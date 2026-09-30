@@ -62,7 +62,7 @@ class Bot {
     }
     for (const u of UPGRADES) {
       const l = s.upg[u.id] || 0;
-      if (l >= u.max || !g.open[u.zone]) continue;
+      if (l >= u.max || !g.upgOpen(u)) continue;
       const c = u.cost(l);
       if (!best || c < best.eff) best = { upg: u, cost: c, eff: c };
     }
@@ -87,6 +87,7 @@ class Bot {
     if (p.site) return g.price(it) * (this.gatePending() ? 0.5 : 1.8) + 2;
     if (p.dock) return g.price(it) * TUNE.exportMul * g.uv('u_export') * 0.7;
     if (dst === 'pwh') return g.price(it) * TUNE.exportMul * g.uv('u_export') * 0.5;
+    if (dst === 'belt_in') return g.price(it) * TUNE.exportMul * g.uv('u_export') * 0.48;   // конвейер довезёт до склада порта
     if (p.sell) return g.price(it) * (dst === 'opt' ? TUNE.optShare : 1);
     if (p.role === 'in') {
       const st = STATIONS[p.station], need = g.siteNeed();

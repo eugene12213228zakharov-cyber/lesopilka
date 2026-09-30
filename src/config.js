@@ -31,7 +31,7 @@ const ZONES = [
   { id: 'z2', name: 'Делянка',           rect: { x0: -80, z0: 6,  x1: -50, z1: 46 }, floor: 2, helmet: 0x58c25e, opens: 'свой лес и пилорама у леса' },
   { id: 'z3', name: 'Столярка',          rect: { x0: 6,   z0: 6,  x1: 50, z1: 38 }, floor: 4, helmet: 0x3d8bfd, opens: 'брус, ножки, щиты, мебель' },
   { id: 'z4', name: 'Мебельный магазин', rect: { x0: 6,   z0: 44, x1: 50, z1: 72 }, floor: 7, helmet: 0xb07cff, opens: 'витрины и покупатели мебели' },
-  { id: 'z5', name: 'Бумажный цех',      rect: { x0: -46, z0: 44, x1: -6, z1: 72 }, floor: 10, helmet: 0x27c1c9, opens: 'коробки: мебель в коробке дороже' },
+  { id: 'z5', name: 'Бумажный цех',      rect: { x0: -46, z0: 44, x1: -6, z1: 72 }, floor: 10, helmet: 0x27c1c9, labelTop: true, opens: 'коробки: мебель в коробке дороже' },
   { id: 'z6', name: 'Порт',              rect: { x0: 56,  z0: 6,  x1: 80, z1: 50 }, floor: 13, helmet: 0xe0503c, opens: 'корабли с заказами, вторая упаковка' },
 ];
 const HELMET_BUILDER = 0xf4f4f4;   // строители — белые каски
@@ -153,6 +153,27 @@ machine('packer', 'z5', 'packer', 'Упаковка', -22, 63, [
 ], { speed: 'u_paper', pad: 'p_packer', inCap: { box: 12, chair: 8, table: 8, wardrobe: 6 }, outCap: { chairB: 12, tableB: 12, wardrobeB: 8 } });
 PILES.cardM_in.name = 'Бункер опилок';
 PROPS.push({ id: 'compressor', type: 'compressor', zone: 'z5', pad: 'p_pneumo', x: -41, z: 58, w: 2.4, d: 2 });
+// вторая линия упаковки — средний и южный ряды цеха. Картонная №2 нужна обязательно: одна машина делает лист за 3 с,
+// а коробочный и упаковка быстрее — без второй картонной второй упаковке было бы не из чего.
+// Опилки в бункер №2 подаёт тот же пневмопровод
+machine('cardM2', 'z5', 'paper', 'Картонная машина №2', -36, 61, [{ in: { sawdust: 3 }, out: { cardboard: 1 }, t: 3 }],
+  { speed: 'u_paper', pad: 'p_cardM2', inCap: { sawdust: 60 }, outCap: { cardboard: 30 } });
+machine('boxM2', 'z5', 'boxer', 'Коробочный станок №2', -36, 69.5, [{ in: { cardboard: 1 }, out: { box: 1 }, t: 2.4 }],
+  { speed: 'u_paper', pad: 'p_boxM2', inCap: { cardboard: 20 }, outCap: { box: 30 } });
+machine('packer2', 'z5', 'packer', 'Упаковка №2', -22, 69.5, STATIONS.packer.recipes,
+  { speed: 'u_paper', pad: 'p_packer2', inCap: { box: 12, chair: 8, table: 8, wardrobe: 6 }, outCap: { chairB: 12, tableB: 12, wardrobeB: 8 } });
+PILES.cardM2_in.name = 'Бункер опилок №2';
+const DUST_BUNKERS = ['cardM_in', 'cardM2_in'];
+// Конвейер в порт: мебель в коробках, положенная на погрузку у упаковок, сама едет на склад порта.
+// Путь владельца: по южному краю карты на восток, вверх по просвету между магазином и портом, сбоку к складу.
+// Лента низкая — её переступают; игрок, вставший на ленту, едет вместе с ней (как на траволаторе)
+addPile('belt_in', { zone: 'z5', x: -13, z: 70.8, w: 2, d: 2, mode: 'drop', pad: 'p_belt', accepts: { chairB: 20, tableB: 20, wardrobeB: 12 }, name: 'Конвейер в порт' });
+const BELT = {
+  pts: [[-13, 70.8], [-13, 74.6], [53, 74.6], [53, 22], [63.6, 22]],   // от погрузки до склада порта, ~133 м
+  half: 0.55,     // полуширина ленты
+  gap: 0.9,       // коробки на ленте — не ближе друг к другу
+  loadT: 0.3,     // с погрузки на ленту — по одной за столько секунд
+};
 
 // ── z6 Порт ──
 addPile('dock', { zone: 'z6', x: 84.5, z: 29, w: 3, d: 3, y: 0.3, mode: 'drop', pad: 'p_dock', dock: true, name: 'Причал' });
@@ -161,40 +182,27 @@ addPile('cash6', { zone: 'z6', x: 70, z: 36, w: 2.4, d: 2, money: true, pad: 'p_
 PROPS.push({ id: 'pcrane', type: 'pcrane', zone: 'z6', pad: 'p_crane', x: 77, z: 22.5, w: 2.4, d: 2.4 });
 const PIER = { x0: 80, z0: 26, x1: 88, z1: 32 };
 const SHIP_DOCK = [93, 29];
-// вторая линия упаковки — у столярки: мебель с верстаков сюда ближе, чем в бумажный цех, склад порта рядом.
-// Картонная машина №2 нужна обязательно: одна машина делает лист за 3 с, а коробочный и упаковка быстрее —
-// без второй картонной второй упаковке было бы не из чего. Опилки в бункер №2 подаёт тот же пневмопровод.
-machine('cardM2', 'z6', 'paper', 'Картонная машина №2', 62, 10, [{ in: { sawdust: 3 }, out: { cardboard: 1 }, t: 3 }],
-  { speed: 'u_paper', pad: 'p_cardM2', inCap: { sawdust: 60 }, outCap: { cardboard: 30 } });
-machine('boxM2', 'z6', 'boxer', 'Коробочный станок №2', 62, 16, [{ in: { cardboard: 1 }, out: { box: 1 }, t: 2.4 }],
-  { speed: 'u_paper', pad: 'p_boxM2', inCap: { cardboard: 20 }, outCap: { box: 30 } });
-machine('packer2', 'z6', 'packer', 'Упаковка №2', 62, 30, STATIONS.packer.recipes,
-  { speed: 'u_paper', pad: 'p_packer2', inCap: { box: 12, chair: 8, table: 8, wardrobe: 6 }, outCap: { chairB: 12, tableB: 12, wardrobeB: 8 } });
-PILES.cardM2_in.name = 'Бункер опилок №2';
-const DUST_BUNKERS = ['cardM_in', 'cardM2_in'];
 
 // ── дороги, переходы, светофор ──
 // Главная дорога — вдоль X (|z| ≤ 3): на западе уходит в тоннель, у моря поворачивает на север — береговая дорога
-// в северный тоннель. От перекрёстка в центре — южная дорога (|x| ≤ 3). Движение правостороннее, полосы ±1.5.
+// в северный тоннель. Движение правостороннее, полосы ±1.5. Южной дороги больше нет (машины по ней не ездили,
+// а рабочие только ходили в обход до «зебр»): на её месте аллея — по ней с юга приходят покупатели.
 const ROAD = {
   half: 3, lane: 1.5, walk: 4, walkW: 1.6,        // полуширина, середина полосы, середина и ширина тротуара
-  westX: -150, coastX: 73, southZ: 190,
+  westX: -150, coastX: 73, southZ: 190,            // southZ — докуда на юг тянется аллея (оттуда идут покупатели)
   tunnelW: { x: -91, x1: -121, z0: -15, z1: 15 },  // западный тоннель: портал и холм над ним
   tunnelN: { z: -17, z1: -45, x0: 62, x1: 84 },    // северный: портал и холм (холм — стена)
 };
-// Переходы: across 'z' — через главную (идут вдоль Z), 'x' — через южную; signal — светофор перехода, без него —
-// «зебра»: пешеход пропускает подъезжающую машину, машина — пешехода на переходе.
-// Рабочие переходят дорогу только здесь (дороги для них непроходимы).
+// Переходы через главную: signal — светофор перехода, без него — «зебра»: пешеход пропускает подъезжающую машину,
+// машина — пешехода на переходе. Рабочие переходят дорогу только здесь (дорога для них непроходима).
 const CROSSINGS = [
   { x: -26, z: 0, across: 'z' }, { x: -4.6, z: 0, across: 'z', signal: 'c' },
   { x: 4.6, z: 0, across: 'z', signal: 'c' }, { x: 28, z: 0, across: 'z' },
-  { x: 0, z: 6.5, across: 'x', signal: 'c' },
-  ...[15, 25, 33, 41, 50, 58, 66].map((z) => ({ x: 0, z, across: 'x' })),
 ];
-// Светофор с датчиком машин на перекрёстке: пешеходам зелёный, пока к стоп-линии не подъедет машина; тогда — машинам,
-// пока не проедут. stopE / stopW — стоп-линии для едущих на восток / запад, stopN — выезд с южной дороги
+// Светофор с датчиком машин: пешеходам зелёный, пока к стоп-линии не подъедет машина; тогда — машинам,
+// пока не проедут. stopE / stopW — стоп-линии для едущих на восток / запад
 const LIGHTS = [
-  { id: 'c', x: 0, stopE: -6.7, stopW: 6.7, stopN: 8.6 },
+  { id: 'c', x: 0, stopE: -6.7, stopW: 6.7 },
 ];
 // у пешеходов приоритет: зелёный не короче walkMin, машинам — коротко, пока проезжают переход (машины 'out' никуда не спешат)
 const LIGHT = { walkMin: 9, walkBlink: 1.5, allRed: 0.5, carMin: 2, carMax: 8, carYellow: 1.2, detect: 25 };
@@ -229,6 +237,7 @@ const ROUTES = {
   port:     { name: 'Портовый грузчик', from: PACKED_OUT, to: ['pwh'], hint: 'мебель в коробках → склад порта' },
   pcard2:   { name: 'Грузчик картона', from: ['cardM2_out'], to: ['boxM2_in'], hint: 'картон → коробочный станок №2' },
   pbox2:    { name: 'Грузчик коробок', from: ['boxM2_out'], to: ['packer2_in'], hint: 'коробки → упаковка №2' },
+  belt:     { name: 'Грузчик конвейера', from: PACKED_OUT, to: ['belt_in'], hint: 'мебель в коробках → конвейер в порт' },
 };
 const ROLE_NAMES = { lumberjack: 'Вальщик', forester: 'Лесник', cashier: 'Кассир', collector: 'Инкассатор', builder: 'Строитель' };
 const ROLE_HINTS = {
@@ -318,13 +327,16 @@ const PADS = [
   { id: 'p_wport1', zone: 'z6', x: 62, z: 42, cost: 1.5e6, worker: { route: 'port' }, req: ['p_crane'] },
   { id: 'p_wport2', zone: 'z6', x: 68, z: 42, cost: 3e6,   worker: { route: 'port' }, req: ['p_wport1'] },
   { id: 'p_wport3', zone: 'z6', x: 74, z: 42, cost: 6e6,   worker: { route: 'port' }, req: ['p_wport2'] },
-  // вторая линия упаковки
-  { id: 'p_cardM2',  zone: 'z6', station: 'cardM2', cost: 1e6, req: ['p_dock', 'p_pneumo'] },
-  { id: 'p_boxM2',   zone: 'z6', station: 'boxM2', cost: 1.2e6, req: ['p_cardM2'] },
-  { id: 'p_packer2', zone: 'z6', station: 'packer2', cost: 1.5e6, req: ['p_boxM2'] },
-  { id: 'p_wport_pcard2', zone: 'z6', x: 73, z: 10,   cost: 1e6,   worker: { route: 'pcard2' }, req: ['p_boxM2'] },
-  { id: 'p_wport_pbox2',  zone: 'z6', x: 73, z: 14.5, cost: 1.2e6, worker: { route: 'pbox2' }, req: ['p_packer2'] },
-  { id: 'p_wport_pfurn',  zone: 'z6', x: 58, z: 38,   cost: 1.4e6, worker: { route: 'pfurn' }, req: ['p_packer2'] },
+  // вторая линия упаковки — в бумажном цехе, когда первая уже работает во всю
+  { id: 'p_cardM2',  zone: 'z5', station: 'cardM2', cost: 120000, req: ['p_packer', 'p_pneumo', 'p_wp_pboxed'] },
+  { id: 'p_boxM2',   zone: 'z5', station: 'boxM2', cost: 150000, req: ['p_cardM2'] },
+  { id: 'p_packer2', zone: 'z5', station: 'packer2', cost: 180000, req: ['p_boxM2'] },
+  { id: 'p_wp_pcard2', zone: 'z5', x: -44.5, z: 47,   cost: 100000, worker: { route: 'pcard2' }, req: ['p_boxM2'] },
+  { id: 'p_wp_pbox2',  zone: 'z5', x: -44.5, z: 65,   cost: 120000, worker: { route: 'pbox2' }, req: ['p_packer2'] },
+  { id: 'p_wp_pfurn3', zone: 'z5', x: -44.5, z: 70.5, cost: 200000, worker: { route: 'pfurn' }, req: ['p_packer2'] },
+  // конвейер в порт: покупается у упаковок, когда в порту есть склад с краном
+  { id: 'p_belt',    zone: 'z5', x: -13, z: 70.8, cost: 2e6, feature: 'belt', req: ['p_crane', 'p_packer'] },
+  { id: 'p_wp_belt', zone: 'z5', x: -8.3, z: 70.8, cost: 800000, worker: { route: 'belt' }, req: ['p_belt'] },
 ];
 const PAD_BY_ID = {};
 for (const p of PADS) {
@@ -345,7 +357,7 @@ function padTitle(p) {
   if (p.gate) return 'Участок: ' + ZONE_BY_ID[p.gate].name;
   return {
     opt: 'Оптовый склад', shelf: 'Витрина', pneumo: 'Пневмопровод для опилок',
-    dock: 'Причал', crane: 'Кран и склад порта', counter2: 'Прилавок №2',
+    dock: 'Причал', crane: 'Кран и склад порта', counter2: 'Прилавок №2', belt: 'Конвейер в порт',
   }[p.feature] || p.id;
 }
 
@@ -366,6 +378,7 @@ function padInfo(p) {
   if (p.feature === 'shelf') return 'сюда кладёшь ' + SHELF_WHAT[Object.keys(SHELF_PAD).find((k) => SHELF_PAD[k] === p.id)] + ' — покупатели разбирают';
   return {
     counter2: 'ещё 3 места для покупателей досок и своя касса',
+    belt: 'коробки сами едут на склад порта; встань на ленту — поедешь',
     opt: 'оптовик увозит мебель за 70% цены', pneumo: 'опилки сами летят в бункер картона',
     dock: 'корабли с заказами платят втрое', crane: 'кран сам грузит корабль со склада порта',
   }[p.feature] || '';
@@ -395,6 +408,9 @@ function helmetColor(zoneId) { return zoneId === 'c' ? HELMET_BUILDER : (ZONE_BY
 // ───────── Улучшения ─────────
 // v(lvl) — значение параметра; cost(lvl) — цена перехода на lvl+1
 function geo(base, k) { return (l) => Math.round(base * Math.pow(k, l)); }
+// сколько досок за раз берёт покупатель (до): после 4-го уровня «Покупателей» — больше. Раньше верхние уровни
+// почти ничего не давали — места у прилавков и так заняты, чаще приходить некуда
+function c1Take(l) { return 3 + Math.max(0, l - 4); }
 const UPGRADES = [
   { id: 'u_cap',    zone: 'z1', name: 'Руки: вместимость',   max: 12, cost: geo(30, 1.62),   v: (l) => 6 + 2 * l, fmt: (v) => v + ' шт.' },
   { id: 'u_speed',  zone: 'z1', name: 'Бег: скорость',        max: 8,  cost: geo(45, 1.8),    v: (l) => 5 + 0.4 * l, fmt: (v) => v.toFixed(1) + ' м/с' },
@@ -405,7 +421,7 @@ const UPGRADES = [
   // выходы всех станков: пилы дольше работают, пока доски не разобрали, — и дольше дают опилки
   { id: 'u_store',  zone: 'z1', name: 'Склады у станков: больше', max: 4, cost: geo(4000, 3), v: (l) => 1 + 0.5 * l, fmt: (v) => '×' + v.toFixed(1) + ' к выходу' },
   { id: 'u_bPrice', zone: 'z1', name: 'Доски: цена',          max: 8,  cost: geo(120, 1.85),  v: (l) => Math.pow(1.2, l), fmt: (v) => '×' + v.toFixed(1) },
-  { id: 'u_cust1',  zone: 'z1', name: 'Покупатели досок: чаще', max: 8, cost: geo(80, 1.7),   v: (l) => 3.2 * Math.pow(0.85, l), fmt: (v) => 'раз в ' + v.toFixed(1) + ' с' },
+  { id: 'u_cust1',  zone: 'z1', name: 'Покупатели досок: чаще и больше', max: 8, cost: geo(80, 1.7), v: (l) => 3.2 * Math.pow(0.85, l), fmt: (v, l) => 'раз в ' + v.toFixed(1) + ' с, до ' + c1Take(l) + ' шт.' },
   { id: 'u_wSpeed', zone: 'z1', name: 'Рабочие: скорость',    max: 10, cost: geo(400, 1.75),  v: (l) => 3 * (1 + 0.1 * l), fmt: (v) => v.toFixed(1) + ' м/с' },
   { id: 'u_wCap',   zone: 'z1', name: 'Рабочие: вместимость', max: 10, cost: geo(400, 1.75),  v: (l) => 4 + 2 * l, fmt: (v) => v + ' шт.' },
   { id: 'u_grow',   zone: 'z2', name: 'Лес: растёт быстрее',  max: 8,  cost: geo(1200, 1.7),  v: (l) => 40 * Math.pow(0.85, l), fmt: (v) => v.toFixed(0) + ' с' },
@@ -425,6 +441,8 @@ const UPGRADES = [
   { id: 'u_export', zone: 'z6', name: 'Экспорт: награда',     max: 10, cost: geo(1.5e6, 1.7), v: (l) => Math.pow(1.25, l), fmt: (v) => '×' + v.toFixed(1) },
   { id: 'u_crane',  zone: 'z6', name: 'Кран: быстрее',        max: 6,  cost: geo(1e6, 1.8),   v: (l) => 1.5 * (1 + 0.4 * l), fmt: (v) => v.toFixed(1) + ' шт/с' },
   { id: 'u_shipT',  zone: 'z6', name: 'Корабль ждёт дольше',  max: 4,  cost: geo(1.2e6, 2),   v: (l) => 240 + 60 * l, fmt: (v) => fmtTime(v) },
+  // pad — улучшение видно, только когда куплена эта площадка
+  { id: 'u_belt',   zone: 'z6', pad: 'p_belt', name: 'Конвейер: быстрее', max: 5, cost: geo(1.5e6, 2), v: (l) => 1.2 * (1 + 0.3 * l), fmt: (v) => v.toFixed(1) + ' м/с' },
 ];
 const UPG_BY_ID = {};
 for (const u of UPGRADES) UPG_BY_ID[u.id] = u;

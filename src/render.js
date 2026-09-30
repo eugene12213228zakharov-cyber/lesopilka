@@ -203,41 +203,31 @@ class View {
   }
 
   // ───────── дороги ─────────
-  // Главная (вдоль X, из западного тоннеля), береговая (на север, в северный тоннель), южная; тротуары, дорожка к
-  // магазину, переходы, стоп-линии, светофоры, бордюры. Раскладка — ROAD / LIGHT / CROSSINGS в config.js
+  // Главная (вдоль X, из западного тоннеля), береговая (на север, в северный тоннель); тротуары, аллея на юг (там была
+  // южная дорога), дорожка к магазину, переходы, стоп-линии, светофор, бордюры. Раскладка — ROAD / LIGHT / CROSSINGS
   buildRoads(curb) {
     const sc = this.scene, R = ROAD, h = R.half, cx = R.coastX, tw = R.tunnelW, tn = R.tunnelN;
     const w1 = R.walk + R.walkW / 2;
     sc.add(groundPatch('asphalt', R.westX, -h, cx + h, h, 0.016));
     sc.add(groundPatch('asphalt', cx - h, tn.z1 + 4, cx + h, -h, 0.016));
-    sc.add(groundPatch('asphalt', -h, h, h, R.southZ, 0.016));
-    // тротуары: вдоль главной с двух сторон, вдоль южной, дорожка к входам магазина
+    // тротуары вдоль главной с двух сторон, аллея на юг во всю бывшую дорогу, дорожка к входам магазина
     const walk = (x0, z0, x1, z1) => sc.add(groundPatch('walk', x0, z0, x1, z1, 0.03));
-    walk(MAP.x0, h + 0.2, -h - 0.2, w1);
-    walk(h + 0.2, h + 0.2, cx - h - 0.2, w1);
+    walk(MAP.x0, h + 0.2, cx - h - 0.2, w1);
     walk(MAP.x0, -w1, cx - h - 0.2, -h - 0.2);
-    walk(-w1, w1, -h - 0.2, R.southZ);
-    walk(h + 0.2, w1, w1, R.southZ);
+    walk(-w1, w1, w1, R.southZ);
     walk(w1, C4_ENTRY[0][1] - 1, C4_ENTRY[1][0] + 4, C4_ENTRY[0][1] + 1);
-    // разметка: переходы-«зебры», стоп-линии, осевая (у перекрёстка — сплошная)
+    // разметка: переходы-«зебры», стоп-линии, осевая (у светофора — сплошная)
     const paint = new Kit(41), white = 0xe9e6dc;
     const mark = (x, z, w, d) => paint.box(white, x, 0.022, z, w, 0.008, d, { b: 0 });
-    for (const c of CROSSINGS) {
-      for (let k = -3; k <= 3; k++) {
-        if (c.across === 'z') mark(c.x, k * 0.82, 2.8, 0.44); else mark(k * 0.82, c.z, 0.44, 2.8);
-      }
-    }
+    for (const c of CROSSINGS) for (let k = -3; k <= 3; k++) mark(c.x, k * 0.82, 2.8, 0.44);
     for (const L of LIGHTS) {
       mark(L.stopE, h / 2, 0.3, h - 0.2);
       mark(L.stopW, -h / 2, 0.3, h - 0.2);
-      if (L.stopN) mark(h / 2, L.stopN, h - 0.2, 0.3);
     }
-    const crossX = CROSSINGS.filter((c) => c.across === 'z').map((c) => c.x), crossZ = CROSSINGS.filter((c) => c.across === 'x').map((c) => c.z);
+    const crossX = CROSSINGS.map((c) => c.x);
     for (let x = tw.x + 2; x < cx - h - 2; x += 4) if (Math.abs(x) > 16 && crossX.every((c) => Math.abs(x - c) > 4)) mark(x, 0, 2, 0.14);
     for (const s of [-1, 1]) mark(s * 11.6, 0, 8.8, 0.14);
     for (let z = tn.z + 2; z < -h - 1; z += 4) mark(cx, z, 0.14, 2);
-    const stopN = LIGHTS.find((l) => l.stopN).stopN;
-    for (let z = stopN + 3; z < R.southZ; z += 4) if (crossZ.every((c) => Math.abs(z - c) > 3)) mark(0, z, 0.14, 2);
     const pm = paint.mesh({}, false);
     pm.receiveShadow = true;
     sc.add(pm);
@@ -250,22 +240,20 @@ class View {
     };
     const alongX = (z, x0, x1, gaps) => gapped(x0, x1, gaps, (a, b) => cb((a + b) / 2, z, b - a, 0.2));
     const alongZ = (x, z0, z1, gaps) => gapped(z0, z1, gaps, (a, b) => cb(x, (a + b) / 2, 0.2, b - a));
-    const gx = crossX.map((c) => [c - 1.5, c + 1.5]), gz = crossZ.map((c) => [c - 1.5, c + 1.5]);
+    const gx = crossX.map((c) => [c - 1.5, c + 1.5]);
     alongX(-h - 0.1, tw.x, cx - h - 0.1, gx);
-    alongX(h + 0.1, tw.x, cx + h + 0.1, gx.concat([[-h - 0.1, h + 0.1]]));
+    alongX(h + 0.1, tw.x, cx + h + 0.1, gx);
     alongZ(cx - h - 0.1, tn.z, -h - 0.1, []); alongZ(cx + h + 0.1, tn.z, h + 0.1, []);
-    alongZ(-h - 0.1, 8.1, R.southZ, gz); alongZ(h + 0.1, 8.1, R.southZ, gz);
     // светофоры: [x, z, светофор, машинная головка, куда смотрит, пешеходная, куда смотрит]
     const lamp = (on, map) => new THREE.MeshBasicMaterial({ color: on, map: map || null, toneMapped: false });
     const icon = [pedIconTexture(false), pedIconTexture(true)];
     const carSet = () => [lamp(0x3b1714), lamp(0x3b2c0e), lamp(0x0f3320)], pedSet = () => [lamp(0x3b1714, icon[0]), lamp(0x0f3320, icon[1])];
     this.lamps = {};
-    for (const L of LIGHTS) this.lamps[L.id] = L.id === 'c' ? { car: carSet(), ped: pedSet(), carS: carSet(), pedS: pedSet() } : { car: carSet(), ped: pedSet() };
+    for (const L of LIGHTS) this.lamps[L.id] = { car: carSet(), ped: pedSet() };
     const P2 = Math.PI / 2;
     const poles = [
       [-7.0, 3.8, 'c', 'car', -P2, 'ped', Math.PI], [-7.0, -3.8, 'c', null, 0, 'ped', 0],
       [7.0, -3.8, 'c', 'car', P2, 'ped', 0], [7.0, 3.8, 'c', null, 0, 'ped', Math.PI],
-      [3.8, 9.0, 'c', 'carS', 0, 'pedS', -P2], [-3.8, 9.0, 'c', null, 0, 'pedS', P2],
     ];
     for (const L of LIGHTS) if (L.id !== 'c') poles.push([L.stopE - 0.5, 3.8, L.id, 'car', -P2, 'ped', Math.PI], [L.stopW + 0.5, -3.8, L.id, 'car', P2, 'ped', 0]);
     for (const [x, z, id, car, cry, ped, pry] of poles) {
@@ -319,7 +307,6 @@ class View {
     for (const id in this.lamps) {
       const st = this.g.lightState(id), L = this.lamps[id];
       car(L.car, st.car); ped(L.ped, st.walk);
-      if (L.carS) { car(L.carS, st.carS); ped(L.pedS, st.walkS); }
     }
   }
 
@@ -334,7 +321,7 @@ class View {
       const r = z.rect;
       sc.add(groundPatch(zoneKind[z.id], r.x0, r.z0, r.x1, r.z1, 0.012));
       const txt = groundText(z.name.toUpperCase(), 2.2, 'rgba(0,0,0,0.16)');
-      txt.position.set((r.x0 + r.x1) / 2, 0.02, r.z1 - 1.8);
+      txt.position.set((r.x0 + r.x1) / 2, 0.02, z.labelTop ? r.z0 + 1.8 : r.z1 - 1.8);   // у бумажного цеха юг занят станками
       sc.add(txt);
       // бетонный бортик по краю зоны
       const cw = 0.22, ch = 0.1, cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2, w = r.x1 - r.x0, d = r.z1 - r.z0;
@@ -712,7 +699,61 @@ class View {
     if (ref.loose) { out.x = ref.loose.x; out.y = 0.03; out.z = ref.loose.z; out.ry = ref.loose.ry; return true; }
     if (ref.tree !== undefined) { const q = PLOTS[ref.tree]; out.x = q.x; out.y = 1.2; out.z = q.z; out.ry = 0; return true; }
     if (ref.ship) { out.x = this.shipX || SHIP_DOCK[0]; out.y = 2.4; out.z = SHIP_DOCK[1]; out.ry = 0; return true; }
+    if (ref.belt !== undefined) { const o = {}; roadAt(BELT_PATH, ref.belt, o); out.x = o.x; out.y = 0.5; out.z = o.z; out.ry = 0; return true; }
     return false;
+  }
+
+  // ───────── конвейер в порт ─────────
+  // Рама, лента с жёлтыми бортами, ножки — одной сеткой; поперечные планки ленты едут с её скоростью
+  buildBelt() {
+    const P = BELT_PATH, w = BELT.half * 2, parts = [];
+    for (let i = 0; i < P.pts.length - 1; i++) {
+      const a = P.pts[i], b = P.pts[i + 1], alongX = Math.abs(a[1] - b[1]) < 1e-6;
+      const cx = (a[0] + b[0]) / 2, cz = (a[1] + b[1]) / 2, L = P.cum[i + 1] - P.cum[i] + w;   // с запасом — углы без щелей
+      const box = (color, y, h, across, off = 0) => parts.push(alongX ? B(color, cx, y, cz + off, L, h, across) : B(color, cx + off, y, cz, across, h, L));
+      box(0x8d959c, 0.27, 0.3, w + 0.1);           // рама
+      box(0x2a2d30, 0.43, 0.03, w - 0.1);          // лента
+      box(0xf2b31a, 0.47, 0.07, 0.07, -w / 2);     // борта
+      box(0xf2b31a, 0.47, 0.07, 0.07, w / 2);
+      const n = Math.max(1, Math.floor(L / 2.5));
+      for (let k = 0; k <= n; k++) {                // ножки
+        const t = k / n, x = a[0] + (b[0] - a[0]) * t, z = a[1] + (b[1] - a[1]) * t;
+        for (const s of [-1, 1]) parts.push(B(0x5d646b, x + (alongX ? 0 : s * 0.45), 0.06, z + (alongX ? s * 0.45 : 0), 0.12, 0.12, 0.12));
+      }
+    }
+    const g = new THREE.Group();
+    g.add(meshOf(parts, true, true));
+    const n = Math.ceil(P.len / 1.2) + 1;
+    this.beltCleats = new THREE.InstancedMesh(mergeParts([B(0xb9c0c7, 0, 0, 0, 1, 1, 1)]), MAT.flat, n);
+    this.beltCleats.frustumCulled = false;
+    this.beltCleats.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    g.add(this.beltCleats);
+    this.scene.add(g);
+    this.beltObj = g;
+    this.pop(g);
+  }
+
+  syncBelt(near) {
+    const g = this.g;
+    if (!g.s.padDone.p_belt) { if (this.beltObj) { this.scene.remove(this.beltObj); this.beltObj = null; } return; }
+    if (!this.beltObj) this.buildBelt();
+    const P = BELT_PATH, v = g.uv('u_belt'), step = 1.2, tmp = {};
+    let k = 0;
+    for (let d = (this.t * v) % step; d < P.len; d += step) {
+      roadAt(P, d, tmp);
+      _quat.setFromAxisAngle(_yAxis, Math.atan2(-tmp.dz, tmp.dx));
+      _mat.compose(_pos.set(tmp.x, 0.455, tmp.z), _quat, _scl.set(0.12, 0.02, BELT.half * 2 - 0.2));
+      this.beltCleats.setMatrixAt(k++, _mat);
+    }
+    _scl.set(1, 1, 1);
+    this.beltCleats.count = k;
+    this.beltCleats.instanceMatrix.needsUpdate = true;
+    // коробки на ленте
+    const o = {};
+    for (const e of g.s.belt) {
+      roadAt(P, e.d, o);
+      if (near(o.x, o.z)) this.addInst(e.it, o.x, 0.46, o.z, Math.atan2(-o.dz, o.dx));
+    }
   }
 
   dstKey(ref, it) {
@@ -863,6 +904,7 @@ class View {
       this.addInst(l.it, x, y, z, l.ry + (1 - k) * 5);
     }
     this.syncLights();
+    this.syncBelt(near);
 
     this.syncShip();
     this.syncPlots();

@@ -60,6 +60,7 @@ const TRUCK_PATHS = (() => {
   return { log, opt };
 })();
 const TRUCK_HALF = [3.1, 1.15];   // полудлина и полуширина машины
+const BELT_PATH = roadPath(BELT.pts, []);   // конвейер в порт: ломаная с накопленной длиной, как путь машины
 
 // Проезжая часть для рабочих непроходима, кроме переходов (путь сам строится через «зебры»)
 const ROAD_BLOCKS = (() => {
@@ -68,10 +69,6 @@ const ROAD_BLOCKS = (() => {
   let x0 = MAP.x0;
   for (const cx of xs) { out.push({ x0, z0: -h, x1: cx - w, z1: h }); x0 = cx + w; }
   out.push({ x0, z0: -h, x1: ROAD.coastX + h, z1: h });
-  const zs = CROSSINGS.filter((c) => c.across === 'x').map((c) => c.z).sort((a, b) => a - b);
-  let z0 = h;
-  for (const cz of zs) { out.push({ x0: -h, z0, x1: h, z1: cz - w }); z0 = cz + w; }
-  out.push({ x0: -h, z0, x1: h, z1: MAP.z1 });
   out.push({ x0: ROAD.coastX - h, z0: ROAD.tunnelN.z, x1: ROAD.coastX + h, z1: -h });
   return out;
 })();
@@ -124,6 +121,7 @@ class Game {
       st: {},
       trees: PLOTS.map(() => ({ stage: 2, t: 0 })),
       ship: null,
+      belt: [],   // что едет по конвейеру в порт: { it, d } — d, сколько метров проехало; первое — ближе к концу
       sitePriority: true,
       tut: 0,
       stats: { made: {}, floorsT: [], zonesT: {}, sold: 0, ships: 0, buys: 0, hitMe: 0, hitW: 0 },
@@ -375,6 +373,7 @@ class Game {
     this.treesStep(dt);
     for (const id of this.stOn) this.stationStep(id, dt);
     this.pneumoStep(dt);
+    this.beltStep(dt);
     this.shipStep(dt);
     if (!this.fast) this.goalStep();
   }
@@ -383,6 +382,9 @@ class Game {
   movePlayer(dt) {
     const pl = this.pl;
     if (pl.stun > 0) { pl.stun -= dt; pl.moving = false; return; }   // сбила машина — секунду приходит в себя
+    // на ленте конвейера едет вместе с ней, даже стоя (как на траволаторе в аэропорту)
+    const ride = this.beltRide(pl.x, pl.z);
+    if (ride) this.moveCollide(pl, ride.dx * ride.v * dt, ride.dz * ride.v * dt);
     let vx = this.input.x, vz = this.input.z;
     const m = Math.hypot(vx, vz);
     if (m > 1) { vx /= m; vz /= m; }
@@ -483,9 +485,12 @@ class Game {
     if (p.gate) this.ev({ t: 'zone', id: p.gate });
   }
 
+  // улучшение доступно: его зона открыта и куплена площадка, к которой оно относится (конвейер)
+  upgOpen(u) { return !!this.open[u.zone] && (!u.pad || !!this.s.padDone[u.pad]); }
+
   buyUpgrade(id) {
     const u = UPG_BY_ID[id], l = this.s.upg[id] || 0;
-    if (l >= u.max || !this.open[u.zone]) return false;
+    if (l >= u.max || !this.upgOpen(u)) return false;
     const c = u.cost(l);
     if (this.s.money < c) return false;
     this.s.money -= c;
@@ -712,7 +717,15 @@ class Game {
     if (!w.on) return '⏸ Выключен';
     if (w.stun > 0) return null;
     if (w.xwait) return w.xwait === 'light' ? '🚦 Ждёт зелёный' : '🚗 Пропускает машину';
-    const names = (list) => list.map((it) => ITEMS[it].name.toLowerCase()).join(', ');
+    // «стул в коробке, стол в коробке, шкаф в коробке» → «мебель в коробках» — подпись над головой короче
+    const names = (list) => {
+      const out = [];
+      let rest = list.slice();
+      for (const [group, word] of [[['chairB', 'tableB', 'wardrobeB'], 'мебель в коробках'], [['chair', 'table', 'wardrobe'], 'мебель']]) {
+        if (group.every((it) => rest.indexOf(it) >= 0)) { out.push(word); rest = rest.filter((it) => group.indexOf(it) < 0); }
+      }
+      return out.concat(rest.map((it) => ITEMS[it].name.toLowerCase())).join(', ');
+    };
     if (w.role === 'route') {
       const R = ROUTES[w.route];
       if (w.stack.length) {
@@ -900,13 +913,11 @@ class Game {
   // Пешеходам зелёный, пока к стоп-линии не подъедет машина; тогда мигает, всем красный, машинам зелёный, пока
   // едут (от carMin до carMax), жёлтый, всем красный — и снова пешеходам. Состояние не сохраняется.
   // car — машины на главной, walk — пешеходы через главную: g — зелёный, gb — мигает, y — жёлтый, r — красный.
-  // У перекрёстка ещё carS / walkS — выезд с южной дороги (машин там нет — всегда красный) и переход через неё.
   lightState(id = 'c') {
     const ph = this.lights[id].ph;
     return {
       car: ph === 'car' ? 'g' : ph === 'carY' ? 'y' : 'r',
       walk: ph === 'walk' ? 'g' : ph === 'walkB' ? 'gb' : 'r',
-      carS: 'r', walkS: 'g',
     };
   }
 
@@ -955,12 +966,10 @@ class Game {
     }
     return false;
   }
-  // путь пересекает главную или южную дорогу
+  // путь пересекает главную дорогу
   crossesRoad(ax, az, bx, bz) {
     const h = ROAD.half + 0.2;
-    const main = az * bz < 0 && Math.abs(az) > h && Math.abs(bz) > h && Math.min(ax, bx) < ROAD.coastX;
-    const south = ax * bx < 0 && Math.abs(ax) > h && Math.abs(bx) > h && Math.max(az, bz) > h;
-    return main || south;
+    return az * bz < 0 && Math.abs(az) > h && Math.abs(bz) > h && Math.min(ax, bx) < ROAD.coastX;
   }
 
   // ───────── лесовозы и оптовик ─────────
@@ -1220,7 +1229,7 @@ class Game {
       this.c1Timer = this.uv('u_cust1') * (0.75 + 0.5 * this.rnd()) / counters;
       const x = C1_ENTRY[0] + (this.rnd() - 0.5) * 0.8;
       const c = this.agent('c1', x, this.farZ(x, C1_ENTRY[1]));
-      c.want = 1 + Math.floor(this.rnd() * 3); c.spot = -1; c.look = Math.floor(this.rnd() * 1000);
+      c.want = 1 + Math.floor(this.rnd() * c1Take(this.s.upg.u_cust1 || 0)); c.spot = -1; c.look = Math.floor(this.rnd() * 1000);
       if (c.z > C1_ENTRY[1] + 0.5) { c.state = 'far'; this.c1q.push(c); } else { c.state = 'in'; n++; }
       this.cust.push(c);
     }
@@ -1491,6 +1500,44 @@ class Game {
       }
       if (!moved) { this.pneuAcc = 0; break; }
     }
+  }
+
+  // ───────── конвейер в порт ─────────
+  // Коробки с погрузки (belt_in) по одной встают на ленту, едут со скоростью u_belt не ближе BELT.gap друг к другу
+  // и в конце сами ложатся на склад порта. Склад полон — лента встаёт, погрузка копится
+  beltStep(dt) {
+    if (!this.s.padDone.p_belt) return;
+    const b = this.s.belt, L = BELT_PATH.len, v = this.uv('u_belt');
+    let limit = L;
+    for (const e of b) { e.d = Math.min(e.d + v * dt, limit); limit = e.d - BELT.gap; }
+    while (b.length && b[0].d >= L - 1e-6 && this.pileSet.has('pwh') && this.space('pwh', b[0].it) > 0) {
+      const e = b.shift();
+      this.put('pwh', e.it);
+      this.ev({ t: 'x', it: e.it, from: { belt: L }, to: { p: 'pwh' } });
+    }
+    this.beltAcc = (this.beltAcc || 0) + dt;
+    if (this.beltAcc < BELT.loadT) return;
+    this.beltAcc = 0;
+    const last = b[b.length - 1];
+    if (last && last.d < BELT.gap) return;
+    const it = this.firstItem('belt_in');
+    if (it) { this.take('belt_in', it); b.push({ it, d: 0 }); }
+  }
+
+  // стоит ли точка на ленте: куда и с какой скоростью везёт (null — не на ленте или лента не куплена)
+  beltRide(x, z) {
+    if (!this.s.padDone.p_belt) return null;
+    const P = BELT_PATH;
+    for (let i = 0; i < P.pts.length - 1; i++) {
+      const a = P.pts[i], b = P.pts[i + 1], L = P.cum[i + 1] - P.cum[i];
+      const dx = (b[0] - a[0]) / L, dz = (b[1] - a[1]) / L;
+      const f = (x - a[0]) * dx + (z - a[1]) * dz, side = -(x - a[0]) * dz + (z - a[1]) * dx;
+      if (f < 0 || f > L || Math.abs(side) > BELT.half) continue;
+      if (i === 0 && f < 1.2) return null;                       // на погрузке стоим — кладём коробки
+      if (i === P.pts.length - 2 && f > L - 0.6) return null;   // у склада — сходим
+      return { dx, dz, v: this.uv('u_belt') };
+    }
+    return null;
   }
 
   // ───────── порт ─────────
