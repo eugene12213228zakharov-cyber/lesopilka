@@ -180,6 +180,36 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
 #modal .fbk { display: flex; gap: 6px; margin: 6px 0 8px; }
 #modal .fbk button { flex: 1; margin: 0; background: var(--line); color: var(--ink); padding: 8px 6px; font-size: 13px; }
 #modal .fbk button.on { background: var(--accent); color: var(--accent-ink); }
+/* казино: окно с играми */
+#modal .casino h2 { margin-bottom: 2px; }
+#modal .cs-top { font-size: 14px; margin: 4px 0 2px; }
+#modal .cs-row { display: flex; gap: 6px; margin: 6px 0; }
+#modal .cs-row button { flex: 1; margin: 0; padding: 8px 4px; font-size: 13px; background: var(--line); color: var(--ink); }
+#modal .cs-row button.on { background: var(--accent); color: var(--accent-ink); }
+#modal .cs-row button:disabled { opacity: 0.45; }
+#modal .cs-row.tabs { margin-top: 10px; }
+#modal .cs-go { width: 100%; font-size: 16px; }
+#modal .cs-go:disabled { opacity: 0.5; }
+#modal .cs-res { min-height: 26px; font-weight: 900; font-size: 17px; margin: 6px 0 0; }
+#modal .cs-res .win { color: var(--good); }
+#modal .casino .nw { white-space: nowrap; }
+.cs-slot { display: flex; justify-content: center; gap: 8px; margin: 10px 0 2px; }
+.cs-slot .reel { width: 72px; height: 80px; border-radius: 12px; background: #fff7df; border: 3px solid #d9a400; font-size: 44px; line-height: 78px; box-shadow: inset 0 -6px 0 rgba(0,0,0,0.07); }
+.cs-slot .reel.spin { filter: blur(1.2px); }
+.cs-wheel { position: relative; width: 220px; height: 220px; margin: 14px auto 2px; }
+.cs-wheel canvas { width: 220px; height: 220px; transition: transform 3.2s cubic-bezier(0.15, 0.7, 0.2, 1); }
+.cs-wheel .ptr { position: absolute; left: 50%; top: -8px; transform: translateX(-50%); border-left: 12px solid transparent; border-right: 12px solid transparent; border-top: 22px solid #e0503c; z-index: 2; }
+.cs-card { width: 84px; height: 118px; margin: 10px auto 2px; border-radius: 12px; background: #fff; border: 2px solid #c9ced4; font-size: 38px; font-weight: 900; display: flex; align-items: center; justify-content: center; color: #23303b; box-shadow: 0 3px 8px rgba(0,0,0,0.15); }
+.cs-card.red { color: #d23a2f; }
+.cs-card.back { background: repeating-linear-gradient(45deg, #b5332a 0 8px, #9c2a22 8px 16px); color: transparent; }
+.cs-lane { display: flex; align-items: center; gap: 6px; margin: 5px 0; padding: 4px 6px; border-radius: 10px; border: 2px solid var(--line); cursor: pointer; text-align: left; }
+.cs-lane.on { border-color: var(--accent); }
+.cs-lane.win { background: rgba(47,158,84,0.18); }
+.cs-lane .nm { width: 70px; font-weight: 800; font-size: 13px; }
+.cs-lane .od { width: 40px; font-weight: 900; font-size: 13px; color: #b0662a; }
+.cs-lane .track { position: relative; flex: 1; height: 26px; border-radius: 8px; background: repeating-linear-gradient(90deg, rgba(0,0,0,0.06) 0 10px, transparent 10px 20px); }
+.cs-lane .runner { position: absolute; top: 0; left: 0; font-size: 19px; line-height: 26px; }
+.cs-lane .tree { font-size: 19px; }
 #modal button.ghost { background: var(--line); color: var(--ink); }
 #modal .fb .chk { font-size: 12px; color: var(--muted); }
 
@@ -247,7 +277,7 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); border: 1px so
 
 <script>
   // Номер сборки: меняется при каждом обновлении, чтобы браузер не смешал старые и новые файлы
-  window.LESO_BUILD = '2026.09.30-10';
+  window.LESO_BUILD = '2026.09.30-11';
   // Тестовая сборка: адрес …/lesopilka-test/ или локальный сервер — своё сохранение и админка F2
   window.LESO_TEST = /lesopilka-test/.test(location.pathname) || ['localhost', '127.0.0.1'].indexOf(location.hostname) >= 0;
   // последние ошибки — прикладываются к сообщению о баге (кнопка «💬»)

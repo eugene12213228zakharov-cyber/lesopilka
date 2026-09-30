@@ -510,6 +510,9 @@ class View {
         this.propObjs[id] = o;
       }
     }
+    // казино: дверь с вывеской у подножия небоскрёба — с 8-го этажа
+    if (g.casinoOn() && !this.casinoObj) { this.casinoObj = this.buildCasinoDoor(); this.scene.add(this.casinoObj); if (!first) this.pop(this.casinoObj); }
+    else if (!g.casinoOn() && this.casinoObj) { this.scene.remove(this.casinoObj); this.casinoObj = null; }
     // площадки куч
     for (const id in PILES) {
       // кучки опилок до бумажного цеха — просто мешки, без площадки (взять их пока нельзя)
@@ -1148,6 +1151,26 @@ class View {
     }
   }
 
+  // дверь казино на южной стене небоскрёба (стена — z = -18) и красный ковёр перед ней — туда встают, чтобы сыграть
+  buildCasinoDoor() {
+    const grp = new THREE.Group(), k = new Kit(181), x = CASINO.x, zw = -18;
+    k.box(0xd9a400, x, 1.5, zw + 0.06, 2.5, 3.0, 0.16, { surf: SURF.metal, b: 0.03 });
+    k.box(CR.glass, x, 1.3, zw + 0.15, 2.0, 2.6, 0.04, { surf: SURF.glass, b: 0 });
+    k.box(0xd9a400, x, 1.3, zw + 0.18, 0.05, 2.6, 0.03, { surf: SURF.metal, b: 0 });
+    k.box(0xb5332a, x, 3.15, zw + 0.7, 3.2, 0.12, 1.4, { surf: SURF.cloth, rot: [0.18, 0, 0], b: 0.02 });
+    for (const dx of [-1.55, 1.55]) {
+      k.cyl(0xd9a400, x + dx, 1.6, zw + 0.25, 0.07, 3.2, { n: 8, surf: SURF.metal });
+      k.cyl(0xfff1b0, x + dx, 3.3, zw + 0.25, 0.14, 0.2, { n: 10, surf: SURF.plastic });
+    }
+    k.box(0xd9a400, x, 0.025, CASINO.z, CASINO.w, 0.03, CASINO.d, { surf: SURF.metal, b: 0.01 });
+    k.box(0xa8231c, x, 0.04, CASINO.z, CASINO.w - 0.3, 0.03, CASINO.d - 0.3, { surf: SURF.cloth, b: 0.01 });
+    grp.add(k.mesh({}, true));
+    const sign = signMesh('КАЗИНО', 2.8, 0.66, '#7d1410', '#ffd84a', 0.72);
+    sign.position.set(x, 3.75, zw + 0.2);
+    grp.add(sign);
+    return grp;
+  }
+
   // ───────── верфь ─────────
   // лодка достроена: съезжает по стапелю в воду, всплывает, выравнивается и уходит в море на восток (за туманом — убираем)
   launchBoat(stId) {
@@ -1317,6 +1340,10 @@ class View {
       for (const it in sh.need) html += `<div class="row${(sh.got[it] || 0) >= sh.need[it] ? ' done' : ''}">${ITEMS[it].name}: ${sh.got[it] || 0}/${sh.need[it]}</div>`;
       html += `<div class="row">Награда: ${fmtMoney(sh.reward)}</div>`;
       this.labels.set('ship', PILES.dock.x, 5, PILES.dock.z, html, 'info');
+    }
+    // казино: куда встать
+    if (g.casinoOn() && Math.abs(CASINO.x - pl.x) < 22 && Math.abs(CASINO.z - pl.z) < 22) {
+      this.labels.set('casino', CASINO.x, 4.7, CASINO.z - 1.4, '<div class="t">🎰 Казино</div><div class="row">встань на ковёр — сыграть</div>', 'station');
     }
     // закрытые зоны
     for (const z of ZONES) {

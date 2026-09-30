@@ -125,11 +125,13 @@ class Game {
       tips: {},   // какие одноразовые подсказки уже показаны (о пне после первой рубки)
       belt: [],   // что едет по конвейеру в порт: { it, d } — d, сколько метров проехало; первое — ближе к концу
       raftT: 0,   // сколько секунд прошло с прошлого плота с брусом к верфи
+      casino: { pend: [], hilo: null, race: null },   // казино: выигрыши, ждущие конца анимации; партия «больше-меньше»; следующая гонка
+      incomeHist: [],   // [playT, stats.sold] раз в 30 с за последние 5 мин — доход для лимита ставки в казино
       tenants: {},          // жильцы: этаж → id из TENANTS
       tenantPending: [],    // построенные этажи, где жилец ещё не выбран: { floor, opts: [id, id] }
       sitePriority: true,
       tut: 0,
-      stats: { made: {}, floorsT: [], zonesT: {}, sold: 0, ships: 0, buys: 0, hitMe: 0, hitW: 0, planted: 0, logs: 0 },
+      stats: { made: {}, floorsT: [], zonesT: {}, sold: 0, ships: 0, buys: 0, hitMe: 0, hitW: 0, planted: 0, logs: 0, casino: { n: 0, bet: 0, won: 0, best: 0 } },
       savedAt: 0,
     };
   }
@@ -313,6 +315,7 @@ class Game {
       add({ x0: q.x - 1.2, z0: q.z - 1.2, x1: q.x + 1.2, z1: q.z + 1.2 }, { k: 'plot', i });
     }
     if (this.open.z4) add(rectOf(CASHIER), { k: 'cash' });
+    if (this.casinoOn()) add(rectOf(CASINO), { k: 'casino' });
   }
 
   trigAt(x, z) {
@@ -419,6 +422,7 @@ class Game {
     this.pneumoStep(dt);
     this.beltStep(dt);
     this.raftStep(dt);
+    this.casinoStep(dt);
     this.shipStep(dt);
     if (!this.fast) this.goalStep();
   }
@@ -478,11 +482,13 @@ class Game {
     this.playerLoose(dt);
     const pl = this.pl, t = this.trigAt(pl.x, pl.z);
     if (!t) { pl.xacc = 0; pl.chop = 0; pl.plant = 0; pl.on = null; return; }
+    const entered = !pl.on || pl.on.k !== t.k;   // только что встал (триггеры пересоздаются при перестройке — сравниваем вид)
     if (pl.on !== t) { pl.on = t; pl.xacc = 0; pl.chop = 0; pl.plant = 0; }
     if (t.k === 'pile') this.playerPile(t.id, dt);
     else if (t.k === 'pad') this.payPad(t.id, dt);
     else if (t.k === 'plot') this.plotWork(pl, t.i, dt, true, true);
     else if (t.k === 'cash') this.cashierHere = true;
+    else if (t.k === 'casino' && entered && !this.soft) this.ev({ t: 'casino' });   // встал на ковёр казино — окно с играми
   }
 
   playerPile(id, dt) {
@@ -1668,6 +1674,96 @@ class Game {
     this.pay(n * TUNE.raftCost);
     const c = this.pc('raftp'); c.beam = (c.beam || 0) + n;
     this.ev({ t: 'raft', n });
+  }
+
+  // ───────── казино (8-й этаж) ─────────
+  // Ставки — только деньгами из кармана. Выигрыш приходит, когда в окне доиграет анимация (s.casino.pend): иначе счётчик
+  // денег выдал бы результат раньше барабанов. Выигрыши — не «заработано» (addMoney), а отдельно: stats.casino. Бот не играет
+  casinoOn() { return this.s.floor >= CASINO.floor; }
+  // доход, $/с — по продажам за последние ~5 минут игры
+  incomeRate() {
+    const h = this.s.incomeHist, old = h.length ? h[0] : null;
+    if (old && this.s.playT - old[0] >= 30) return (this.s.stats.sold - old[1]) / (this.s.playT - old[0]);
+    return this.s.playT > 0 ? this.s.stats.sold / this.s.playT : 0;
+  }
+  casinoMax() { return Math.max(CASINO.minMax, Math.round(this.incomeRate() * 60 * CASINO.maxMin)); }
+  casinoStats() { return this.s.stats.casino || (this.s.stats.casino = { n: 0, bet: 0, won: 0, best: 0 }); }
+  casinoBet(bet) {
+    if (!this.casinoOn() || !(bet > 0) || bet > this.s.money + 1e-6 || bet > this.casinoMax() + 1e-6) return false;
+    this.s.money -= bet;
+    const cs = this.casinoStats(); cs.n++; cs.bet += bet;
+    return true;
+  }
+  casinoWin(v, delay) {
+    if (!(v > 0)) return;
+    this.s.casino.pend.push({ v, t: delay });
+    const cs = this.casinoStats(); cs.won += v; cs.best = Math.max(cs.best, v);
+  }
+  casinoStep(dt) {
+    const s = this.s, h = s.incomeHist;
+    if (!this.fast && (!h.length || s.playT - h[h.length - 1][0] >= 30)) { h.push([s.playT, s.stats.sold]); if (h.length > 11) h.shift(); }
+    const p = s.casino.pend;
+    for (let i = p.length - 1; i >= 0; i--) {
+      p[i].t -= dt;
+      if (p[i].t <= 0) { s.money += p[i].v; this.ev({ t: 'casinoPaid', v: p[i].v }); p.splice(i, 1); }
+    }
+  }
+  pickW(w) { let r = this.rnd() * w.reduce((a, b) => a + b, 0); for (let i = 0; i < w.length; i++) { r -= w[i]; if (r < 0) return i; } return w.length - 1; }
+  // слот «Лесной джекпот»: три барабана; три одинаковых или пара на первых двух
+  slotSpin(bet) {
+    if (!this.casinoBet(bet)) return null;
+    const S = CASINO.slot, r = [this.pickW(S.w), this.pickW(S.w), this.pickW(S.w)];
+    const m = r[0] === r[1] && r[1] === r[2] ? S.three[r[0]] : r[0] === r[1] ? S.pair[r[0]] : 0;
+    this.casinoWin(bet * m, S.t);
+    return { reels: r, mult: m, win: bet * m };
+  }
+  wheelSpin(bet) {
+    if (!this.casinoBet(bet)) return null;
+    const W = CASINO.wheel, i = Math.floor(this.rnd() * W.m.length), m = W.m[i];
+    this.casinoWin(bet * m, W.t);
+    return { sector: i, mult: m, win: bet * m };
+  }
+  // гонка лесорубов: шансы следующей гонки известны заранее — игрок видит выплаты до ставки
+  raceNext() {
+    const c = this.s.casino;
+    if (!c.race) {
+      const w = CASINO.race.names.map(() => 0.6 + this.rnd() * 1.6), W = w.reduce((a, b) => a + b, 0), p = w.map((x) => x / W);
+      c.race = { p, odds: p.map((x) => Math.floor((CASINO.race.edge / x) * 10) / 10) };
+    }
+    return c.race;
+  }
+  raceBet(bet, pick) {
+    const R = this.raceNext();
+    if (!(pick >= 0 && pick < R.p.length) || !this.casinoBet(bet)) return null;
+    const winner = this.pickW(R.p), win = winner === pick ? bet * R.odds[pick] : 0;
+    this.casinoWin(win, CASINO.race.t);
+    this.s.casino.race = null;   // у следующей гонки — новые шансы
+    return { winner, odds: R.odds, win };
+  }
+  // «больше-меньше»: карты 2…14 (туз старший), равная — проигрыш; угадал — банк × edge / вероятность
+  hiloMult(card, up) { const n = up ? 14 - card : card - 2; return n > 0 ? Math.floor((CASINO.hilo.edge * 13 / n) * 100) / 100 : 0; }
+  hiloStart(bet) {
+    if (this.s.casino.hilo || !this.casinoBet(bet)) return null;
+    return (this.s.casino.hilo = { bet, pot: bet, card: 2 + Math.floor(this.rnd() * 13), step: 0 });
+  }
+  hiloGuess(up) {
+    const h = this.s.casino.hilo;
+    const m = h ? this.hiloMult(h.card, up) : 0;
+    if (!m) return null;
+    const prev = h.card, card = 2 + Math.floor(this.rnd() * 13), ok = up ? card > prev : card < prev;
+    h.card = card; h.step++;
+    if (!ok) { this.s.casino.hilo = null; return { prev, card, ok, pot: 0 }; }
+    h.pot = Math.round(h.pot * m);
+    const done = h.step >= CASINO.hilo.steps;
+    if (done) this.hiloTake();
+    return { prev, card, ok, pot: h.pot, done };
+  }
+  hiloTake() {
+    const h = this.s.casino.hilo;
+    if (!h) return 0;
+    this.s.casino.hilo = null;
+    this.casinoWin(h.pot, 0.01);
+    return h.pot;
   }
 
   // ───────── порт ─────────

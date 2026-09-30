@@ -71,6 +71,7 @@ class Sfx {
     else if (e.t === 'hit') this.play('hit');
     else if (e.t === 'hitW' && dist(e.x, e.z, g.pl.x, g.pl.z) < 30) this.play('hit');
     else if (e.t === 'horn' && dist(e.x, e.z, g.pl.x, g.pl.z) < 30) this.play('horn');
+    else if (e.t === 'casinoPaid') this.play('cash');   // выигрыш в казино
     else if (e.t === 'launch' && STATIONS[e.st] && dist(STATIONS[e.st].x, STATIONS[e.st].z, g.pl.x, g.pl.z) < 40) this.play('launch');
   }
 }

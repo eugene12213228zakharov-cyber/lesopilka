@@ -39,6 +39,7 @@ window.lesopilkaReplace = (data) => {
   const sfx = new Sfx();
   const view = new View($('c'), game, $('labels'));
   const ui = new UI(game, sfx);
+  ui.saveNow = () => writeSave(game);   // казино сохраняет сразу после ставки — перезагрузкой проигрыш не отменить
   ui.view = view;   // список рабочих подсвечивает их в мире и показывает камерой
   const input = new Input($('c'), game, view, ui, sfx);
   window.__game = game;
