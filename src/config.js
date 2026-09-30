@@ -21,6 +21,8 @@ const ITEMS = {
   chairB:    { name: 'Стул в коробке', price: 60,  h: 0.56, base: 'chair' },
   tableB:    { name: 'Стол в коробке', price: 110, h: 0.52, base: 'table' },
   wardrobeB: { name: 'Шкаф в коробке', price: 240, h: 0.96, base: 'wardrobe' },
+  // лодку в руки не берут: достроенная на стапеле, она сама уходит в море и продаётся (цена — за штуку)
+  boat:      { name: 'Лодка',          price: 16000, h: 1 },
 };
 
 // ───────── Зоны ─────────
@@ -35,6 +37,8 @@ const ZONES = [
   { id: 'z4', name: 'Мебельный магазин', rect: { x0: 6,   z0: 44, x1: 50, z1: 72 }, floor: 7, helmet: 0xb07cff, opens: 'витрины и покупатели мебели' },
   { id: 'z5', name: 'Бумажный цех',      rect: { x0: -46, z0: 44, x1: -6, z1: 72 }, floor: 10, helmet: 0x27c1c9, labelTop: true, opens: 'коробки: мебель в коробке дороже' },
   { id: 'z6', name: 'Порт',              rect: { x0: 56,  z0: 6,  x1: 80, z1: 50 }, floor: 13, helmet: 0xe0503c, opens: 'корабли с заказами, вторая упаковка' },
+  // верфь — у моря южнее порта: стапели спускаются в воду
+  { id: 'z7', name: 'Верфь',             rect: { x0: 55,  z0: 54, x1: 80, z1: 78 }, floor: 15, helmet: 0xff5fa2, opens: 'стапели: лодки из бруса и щитов сами уходят в море за большие деньги' },
 ];
 const HELMET_BUILDER = 0xf4f4f4;   // строители — белые каски
 const ZONE_BY_ID = {};
@@ -195,6 +199,32 @@ PROPS.push({ id: 'pcrane', type: 'pcrane', zone: 'z6', pad: 'p_crane', x: 77, z:
 const PIER = { x0: 80, z0: 26, x1: 88, z1: 32 };
 const SHIP_DOCK = [93, 29];
 
+// ── z7 Верфь ──
+// Стапель — длинный станок вдоль берега: материалы кладут на площадку у верхнего (западного) конца, корпус растёт
+// на стапеле, готовая лодка сама съезжает в море и продаётся — деньги в кассу верфи (выхода у стапеля нет: launch)
+function slipway(id, name, x, z, recipe, o) {
+  STATIONS[id] = {
+    id, zone: 'z7', type: 'slip', name, x, z, w: 11, d: 4, recipes: [recipe], speed: o.speed, pad: o.pad || null,
+    in: id + '_in', out: null, by: null, launch: true, cash: o.cash,
+  };
+  addPile(id + '_in', { zone: 'z7', x: x - 7.1, z, w: 2.4, d: 3.2, mode: 'drop', accepts: o.inCap, station: id, role: 'in' });
+}
+// цена лодки — так, чтобы два стапеля давали ~20–30% дохода поздней игры (у бота на 15-м этаже ~400 тыс./мин, к финалу ~2 млн)
+const BOAT_RECIPE = { in: { beam: 12, panel: 6 }, out: { boat: 1 }, t: 30 };
+// Брус верфь получает не со столярки, а плотами по морю: буксир раз в TUNE.raftT приводит плот, брус ложится на берег,
+// за каждый — TUNE.raftCost. Со столяркой верфь делилась бы брусом с этажами 18 и 20 (450 и 600 бруса): бот так и делал —
+// стапели стояли, а игра шла на 10–50 мин дольше. Щиты у верфи тоже свои — клеёный щит из бруса на своём прессе
+addPile('raftp', { zone: 'z7', x: 75.5, z: 56.4, w: 3.6, d: 2.8, mode: 'pick', pad: 'p_raft', accepts: { beam: 48 }, keep: true, name: 'Брус с плотов' });
+const RAFT = { x: 83, z: 56.4 };   // где плот стоит у берега (в море)
+machine('spress', 'z7', 'press', 'Клеильный пресс верфи', 61.5, 57, [{ in: { beam: 2 }, out: { panel: 1 }, t: 2.4 }],
+  { speed: 'u_ship', pad: 'p_spress', inCap: { beam: 20 }, outCap: { panel: 30 } });
+// щиты пресса верфи — для стапелей: строители их не берут (keep), иначе этажи 18–20 (по 400–500 щитов) забирали всё,
+// а стапели стояли без щитов с полным входом бруса — игроку непонятно. Сам игрок отнести их на стройку может
+PILES.spress_out.keep = true;
+slipway('slip1', 'Стапель', 73.5, 62.5, BOAT_RECIPE, { speed: 'u_ship', pad: 'p_slip1', cash: 'cash7', inCap: { beam: 36, panel: 18 } });
+slipway('slip2', 'Стапель №2', 73.5, 70, BOAT_RECIPE, { speed: 'u_ship', pad: 'p_slip2', cash: 'cash7', inCap: { beam: 36, panel: 18 } });
+addPile('cash7', { zone: 'z7', x: 58, z: 63, w: 2.4, d: 2, money: true, pad: 'p_slip1', name: 'касса верфи' });
+
 // ── дороги, переходы, светофор ──
 // Главная дорога — вдоль X (|z| ≤ 3): на западе уходит в тоннель, у моря поворачивает на север — береговая дорога
 // в северный тоннель. Движение правостороннее, полосы ±1.5. Южной дороги больше нет (машины по ней не ездили,
@@ -253,6 +283,9 @@ const ROUTES = {
   pcard2:   { name: 'Грузчик картона', from: ['cardM2_out'], to: ['boxM2_in'], hint: 'картон → коробочный станок №2' },
   pbox2:    { name: 'Грузчик коробок', from: ['boxM2_out'], to: ['packer2_in'], hint: 'коробки → упаковка №2' },
   belt:     { name: 'Грузчик конвейера', from: PACKED_OUT, to: ['belt_in'], hint: 'мебель в коробках → конвейер в порт' },
+  // верфь: брус — с плотов, щиты — со своего пресса; со столяркой не делится
+  sbeams:   { name: 'Грузчик бруса верфи', from: ['raftp'], to: ['spress_in', 'slip1_in', 'slip2_in'], hint: 'брус с плотов → пресс и стапели' },
+  spanels:  { name: 'Грузчик щитов верфи', from: ['spress_out'], to: ['slip1_in', 'slip2_in'], hint: 'щиты с пресса верфи → стапели' },
 };
 const ROLE_NAMES = { lumberjack: 'Вальщик', forester: 'Лесник', cashier: 'Кассир', collector: 'Инкассатор', builder: 'Строитель' };
 const ROLE_HINTS = {
@@ -352,6 +385,15 @@ const PADS = [
   // конвейер в порт: покупается у упаковок, когда в порту есть склад с краном
   { id: 'p_belt',    zone: 'z5', x: -13, z: 70.8, cost: 2e6, feature: 'belt', req: ['p_crane', 'p_packer'] },
   { id: 'p_wp_belt', zone: 'z5', x: -8.3, z: 70.8, cost: 800000, worker: { route: 'belt' }, req: ['p_belt'] },
+  // z7 Верфь: причал для плотов, стапель и пресс щитов из бруса — сразу, грузчики — когда есть откуда и куда носить
+  { id: 'p_gate_z7',   zone: 'c',  x: 61, z: 52, cost: 3e6, gate: 'z7', minFloor: 15 },
+  { id: 'p_raft',      zone: 'z7', x: 75.5, z: 56.4, w: 3.6, d: 2.8, cost: 800000, feature: 'raft' },
+  { id: 'p_slip1',     zone: 'z7', station: 'slip1', cost: 1.5e6 },
+  { id: 'p_spress',    zone: 'z7', station: 'spress', cost: 1e6 },
+  { id: 'p_ws_beams1', zone: 'z7', x: 58, z: 67, cost: 1.2e6, worker: { route: 'sbeams' }, req: ['p_raft', 'p_slip1'] },
+  { id: 'p_ws_panels', zone: 'z7', x: 58, z: 71, cost: 1.5e6, worker: { route: 'spanels' }, req: ['p_slip1', 'p_spress'] },
+  { id: 'p_slip2',     zone: 'z7', station: 'slip2', cost: 3e6, req: ['p_ws_beams1', 'p_ws_panels'] },
+  { id: 'p_ws_beams2', zone: 'z7', x: 58, z: 75, cost: 4e6, worker: { route: 'sbeams' }, req: ['p_slip2'] },
 ];
 const PAD_BY_ID = {};
 for (const p of PADS) {
@@ -372,13 +414,14 @@ function padTitle(p) {
   if (p.gate) return 'Участок: ' + ZONE_BY_ID[p.gate].name;
   return {
     opt: 'Оптовый склад', shelf: 'Витрина', pneumo: 'Пневмопровод для опилок',
-    dock: 'Причал', crane: 'Кран и склад порта', counter2: 'Прилавок №2', belt: 'Конвейер в порт',
+    dock: 'Причал', crane: 'Кран и склад порта', counter2: 'Прилавок №2', belt: 'Конвейер в порт', raft: 'Причал для плотов',
   }[p.feature] || p.id;
 }
 
 // Рецепт станка словами: «бревно → 2 доски + опилки»
 function recipeText(st) {
   if (st.type === 'packer') return 'мебель + коробка → мебель в коробке';
+  if (st.type === 'slip') return 'брус и щиты → лодка; готовая сама уходит в море';
   const r = st.recipes[0];
   const part = (o) => Object.keys(o).map((k) => (o[k] > 1 ? o[k] + ' ' + (ITEMS[k].few || ITEMS[k].name.toLowerCase()) : ITEMS[k].name.toLowerCase())).join(' + ');
   return part(r.in) + ' → ' + part(r.out) + (r.by && st.by ? ' + опилки' : '');
@@ -396,6 +439,7 @@ function padInfo(p) {
     belt: 'коробки сами едут на склад порта; встань на ленту — поедешь',
     opt: 'оптовик увозит мебель за 70% цены', pneumo: 'опилки сами летят в бункер картона',
     dock: 'корабли с заказами платят втрое', crane: 'кран сам грузит корабль со склада порта',
+    raft: 'буксир раз в ' + TUNE.raftT + ' с приводит плот с брусом для лодок, $' + TUNE.raftCost + ' за брус',
   }[p.feature] || '';
 }
 
@@ -459,6 +503,9 @@ const UPGRADES = [
   { id: 'u_shipT',  zone: 'z6', name: 'Корабль ждёт дольше',  max: 4,  cost: geo(1.2e6, 2),   v: (l) => 240 + 60 * l, fmt: (v) => fmtTime(v) },
   // pad — улучшение видно, только когда куплена эта площадка
   { id: 'u_belt',   zone: 'z6', pad: 'p_belt', name: 'Конвейер: быстрее', max: 5, cost: geo(1.5e6, 2), v: (l) => 1.2 * (1 + 0.3 * l), fmt: (v) => v.toFixed(1) + ' м/с' },
+  { id: 'u_raft',   zone: 'z7', pad: 'p_raft', name: 'Плоты: больше бруса за раз', max: 6, cost: geo(1.5e6, 1.9), v: (l) => 24 + 12 * l, fmt: (v) => v + ' шт.' },
+  { id: 'u_ship',   zone: 'z7', name: 'Верфь: скорость',      max: 10, cost: geo(2e6, 1.7),   v: (l) => Math.pow(0.87, l), fmt: (v) => '×' + (1 / v).toFixed(1) },
+  { id: 'u_boat',   zone: 'z7', name: 'Лодки: цена',          max: 10, cost: geo(3e6, 1.75),  v: (l) => Math.pow(1.15, l), fmt: (v) => '×' + v.toFixed(1) },
 ];
 const UPG_BY_ID = {};
 for (const u of UPGRADES) UPG_BY_ID[u.id] = u;
@@ -480,7 +527,7 @@ const FLOORS = [
   { need: { tableB: 45, wardrobe: 30, chairB: 55 } },
   { need: { wardrobeB: 25, tableB: 60, beam: 300 }, unlock: 'z6' },
   { need: { chairB: 100, tableB: 70, panel: 300 } },
-  { need: { wardrobeB: 40, beam: 400, chairB: 120 } },
+  { need: { wardrobeB: 40, beam: 400, chairB: 120 }, unlock: 'z7' },
   { need: { tableB: 140, wardrobeB: 60, panel: 450 } },
   { need: { chairB: 150, tableB: 100, wardrobeB: 50 } },
   { need: { beam: 450, panel: 400, wardrobeB: 70 } },
@@ -491,7 +538,7 @@ const FLOOR_BONUS = 1.1;    // ×1.1 к ценам продажи за кажд�
 
 // ───────── Жильцы небоскрёба ─────────
 // На этаж, который не открывает зону, въезжает жилец: игрок выбирает одного из двух, бонусы складываются.
-// eff — что даёт: wSpeed/cust/machines/store/price/furn/grow/run — доли (+10% = 0.1); wCap — штуки; ship — секунды;
+// eff — что даёт: wSpeed/cust/machines/store/price/furn/boat/grow/run — доли (+10% = 0.1); wCap — штуки; ship — секунды;
 // insured — машина не выбивает груз из рук (такой жилец один на игру: once).
 // avail — когда жильца можно предлагать: только если его бонус уже на что-то действует (корабль — после причала,
 // мебель — со столярки, рабочие — когда кто-то нанят, страховка — когда по дороге ездит лесовоз)
@@ -508,6 +555,7 @@ const TENANTS = {
   fitness:   { name: 'Фитнес-клуб', icon: '🏃', text: 'ты бегаешь быстрее на 8%', eff: { run: 0.08 } },
   logistics: { name: 'Логистическая компания', icon: '🚢', text: 'корабль ждёт на минуту дольше', eff: { ship: 60 }, avail: (g) => !!g.s.padDone.p_dock },
   insurance: { name: 'Страховая', icon: '🛡', text: 'машина больше не выбивает груз из рук', eff: { insured: 1 }, once: true, avail: (g) => !!g.open.z1 },
+  yachtclub: { name: 'Яхт-клуб', icon: '⛵', text: 'лодки дороже на 10%', eff: { boat: 0.1 }, avail: (g) => !!g.s.padDone.p_slip1 },
 };
 
 // ───────── Идеи и баги (кнопка «💬») ─────────
@@ -548,6 +596,8 @@ const TUNE = {
   shipAway: 25,
   shipSail: 7,
   exportMul: 3,
+  raftT: 20,            // плот с брусом к верфи — раз в столько секунд (сколько бруса — «Плоты: больше бруса за раз»)
+  raftCost: 30,         // брус с плота — за штуку (выгружен на берег — оплачен)
   offlineCap: 3600,      // офлайн-доход — не больше часа работы цехов
   custSpeed: 2.6,
 };

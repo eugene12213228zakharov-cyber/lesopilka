@@ -265,6 +265,8 @@ function buildStation(type) {
     arm.position.set(0.2, 1.3, -0.7);
     g.add(arm);
     anim = (t, on) => { arm.rotation.x = on ? 0.3 + Math.sin(t * 4) * 0.4 : 0.3; };
+  } else if (type === 'slip') {   // стапель: просто бетонный спуск к воде (лодки рисует craft.js)
+    g.add(meshOf([B(0x9a958b, 0.8, 0.3, 0, 13, 0.6, 3.4)]));
   }
   return { g, anim };
 }

@@ -53,6 +53,9 @@ class UI {
       this.toast('🎉 Новая зона: <b>' + ZONE_BY_ID[e.id].name + '</b>', 'big');
       if (e.id === 'z1') this.toast('🚚 Брёвна на лесопилку везёт лесовоз — за деньги. Сколько за рейс — «Улучшения» → «Закупка брёвен»');
       if (this.panel) this.render();
+    } else if (e.t === 'launch' && !g.s.tips.boat) {   // первая лодка — где деньги
+      g.s.tips.boat = true;
+      this.toast('⛵ Первая лодка сошла на воду! Деньги за неё — в кассе верфи', 'big');
     } else if (e.t === 'fell' && e.by === 'player' && !g.s.tips.fell) {   // первое срубленное дерево — объясняем про пень
       g.s.tips.fell = true;
       this.toast('🌲 На месте дерева остался пень — встань на него, и посадишь новое', 'big');

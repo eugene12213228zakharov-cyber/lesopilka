@@ -37,8 +37,9 @@ class Bot {
   wanted() {
     const need = this.g.siteNeed(), w = new Set();
     for (const it in need) if (need[it] > 0) w.add(it);
+    // цепочки — только станков открытых зон: пресс верфи (щит из бруса) не должен делать брус «нужным стройке» с 6-го этажа
     for (let pass = 0; pass < 2; pass++) {
-      for (const id in STATIONS) for (const r of STATIONS[id].recipes) {
+      for (const id in STATIONS) if (this.g.open[STATIONS[id].zone]) for (const r of STATIONS[id].recipes) {
         if (Object.keys(r.out).some((o) => w.has(o))) for (const i in r.in) w.add(i);
       }
     }

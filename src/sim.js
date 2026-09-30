@@ -124,6 +124,7 @@ class Game {
       ship: null,
       tips: {},   // какие одноразовые подсказки уже показаны (о пне после первой рубки)
       belt: [],   // что едет по конвейеру в порт: { it, d } — d, сколько метров проехало; первое — ближе к концу
+      raftT: 0,   // сколько секунд прошло с прошлого плота с брусом к верфи
       tenants: {},          // жильцы: этаж → id из TENANTS
       tenantPending: [],    // построенные этажи, где жилец ещё не выбран: { floor, opts: [id, id] }
       sitePriority: true,
@@ -201,13 +202,14 @@ class Game {
       if (d.base) p *= this.uv('u_boxMul');
       return p;
     }
+    if (it === 'boat') return d.price * this.uv('u_boat') * fb * (1 + this.teff.boat);
     return d.price * fb;
   }
 
   // ───────── жильцы небоскрёба ─────────
   // Бонусы всех въехавших жильцов, сложенные по видам (this.teff), — пересчитываются при въезде и загрузке
   tenantCalc() {
-    const t = { wSpeed: 0, cust: 0, machines: 0, store: 0, price: 0, furn: 0, grow: 0, run: 0, wCap: 0, ship: 0, insured: 0 };
+    const t = { wSpeed: 0, cust: 0, machines: 0, store: 0, price: 0, furn: 0, boat: 0, grow: 0, run: 0, wCap: 0, ship: 0, insured: 0 };
     for (const fl in this.s.tenants) { const T = TENANTS[this.s.tenants[fl]]; if (T) for (const k in T.eff) t[k] += T.eff[k]; }
     this.teff = t;
   }
@@ -336,6 +338,7 @@ class Game {
     const b = p.accepts[it] || 0;
     if (!b) return 0;
     if (id === 'yard') return this.uv('u_yard');
+    if (id === 'raftp') return 2 * this.uv('u_raft');   // берег верфи — на два плота
     if (p.shelf) return this.uv('u_shelf');
     if (p.role === 'out') return Math.round(b * this.uv('u_store') * (1 + this.teff.store));
     return b;
@@ -415,6 +418,7 @@ class Game {
     for (const id of this.stOn) this.stationStep(id, dt);
     this.pneumoStep(dt);
     this.beltStep(dt);
+    this.raftStep(dt);
     this.shipStep(dt);
     if (!this.fast) this.goalStep();
   }
@@ -882,7 +886,7 @@ class Game {
         const p = PILES[id];
         // строитель берёт и с выхода станков, и с витрин/склада — стройка важнее продажи
         const src = (p.mode === 'pick' && (!p.pickZone || this.open[p.pickZone])) || p.sell || id === 'pwh';
-        if (!src || p.site || p.dock) continue;
+        if (!src || p.site || p.dock || p.keep) continue;   // keep — выход только для своего цеха (щиты верфи)
         const c = this.count(id, it);
         if (c <= 0) continue;
         const n = Math.min(c, need[it], cap);
@@ -1560,6 +1564,12 @@ class Game {
       const need = (1 - ss.prog) * T;
       if (time < need) { ss.prog += time / T; return; }
       time -= need; ss.prog = 1;
+      if (st.launch) {   // стапель: готовая лодка сама съезжает в море и продаётся — деньги в кассу верфи
+        for (const it in rec.out) { this.stat(it, rec.out[it]); this.addCash(st.cash, this.price(it) * rec.out[it], st.x + 7, st.z); }
+        this.ev({ t: 'launch', st: id, it: Object.keys(rec.out)[0] });
+        ss.cur = -1; ss.prog = 0;
+        continue;
+      }
       const om = st.type === 'bench' ? this.uv('u_benchOut') : 1;   // двойная сборка на верстаках
       for (const it in rec.out) if (this.space(st.out, it) < rec.out[it] * om) return;   // ждём место на выходе
       const out = this.pc(st.out);
@@ -1579,7 +1589,7 @@ class Game {
       const r = (ss.rr + k) % n, rec = st.recipes[r];
       let ok = true;
       for (const it in rec.in) if (this.count(st.in, it) < rec.in[it]) { ok = false; break; }
-      if (ok) for (const it in rec.out) if (this.space(st.out, it) < rec.out[it]) { ok = false; break; }
+      if (ok && st.out) for (const it in rec.out) if (this.space(st.out, it) < rec.out[it]) { ok = false; break; }
       if (ok) { ss.rr = (r + 1) % n; return r; }
     }
     return -1;
@@ -1643,6 +1653,21 @@ class Game {
       return { dx, dz, v: this.uv('u_belt') };
     }
     return null;
+  }
+
+  // ───────── плоты с брусом к верфи ─────────
+  // Буксир раз в TUNE.raftT приводит плот: брус ложится на берег (raftp) — не больше «Плоты: больше бруса за раз» и места.
+  // За каждый — TUNE.raftCost из кармана, не хватает — из касс; денег нет — сколько хватит
+  raftStep(dt) {
+    if (!this.s.padDone.p_raft || !this.open.z7) return;
+    this.s.raftT = (this.s.raftT || 0) + dt;
+    if (this.s.raftT < TUNE.raftT) return;
+    this.s.raftT = 0;
+    const n = Math.min(this.uv('u_raft'), this.space('raftp', 'beam'), Math.floor((this.s.money + this.moneyInCash()) / TUNE.raftCost));
+    if (n <= 0) return;
+    this.pay(n * TUNE.raftCost);
+    const c = this.pc('raftp'); c.beam = (c.beam || 0) + n;
+    this.ev({ t: 'raft', n });
   }
 
   // ───────── порт ─────────

@@ -22,8 +22,9 @@ const MODEL_OF = {
   },
   truck: { log: 'own/logTruck', opt: 'car-kit/delivery' },
   ship: 'watercraft-kit/ship-cargo-a',
+  tug: 'watercraft-kit/boat-tug-a',   // буксир с плотом бруса к верфи
   // станки: 'own/…' — свои, 'kenney' — прежняя сборка из деталей Factory Kit (KENNEY_ST)
-  st: { saw: 'own/saw', beamer: 'own/beamer', press: 'own/press', lathe: 'own/lathe', bench: 'own/bench', paper: 'own/paper', boxer: 'own/boxer', packer: 'own/packer' },
+  st: { saw: 'own/saw', beamer: 'own/beamer', press: 'own/press', lathe: 'own/lathe', bench: 'own/bench', paper: 'own/paper', boxer: 'own/boxer', packer: 'own/packer', slip: 'own/slip' },
   // постройки: 'own/…' — свои; касса 'kenney' — барная стойка, монитор и цветок (cashDesk, register, plant)
   props: { stall: 'own/stall', rack: 'own/rack', tcrane: 'own/tcrane', pcrane: 'own/pcrane', compressor: 'own/compressor', trash: 'own/trash', tower: 'own/tower', desk: 'kenney' },
   tower: 'own',   // этажи, леса и крыша небоскрёба: 'own' — свои (craft.js), иначе прежние из models.js

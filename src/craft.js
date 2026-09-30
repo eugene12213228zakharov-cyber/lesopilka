@@ -1228,11 +1228,162 @@ function ownHillGeo(w, d, h, seed) {
   return g;
 }
 
+// ───────── верфь: лодка и стапель ─────────
+// Катер ~8.4 м: обводы — по сечениям от кормы (t=0, транец) к носу (t=1, форштевень), нос — к +X (к морю), киль — на y=0.
+// Части — отдельными геометриями: стапель показывает постройку по этапам (киль → шпангоуты → днище → борта → палуба →
+// рубка → покраска), спущенная на воду лодка — готовая. Геометрии общие для всех стапелей и спущенных лодок (кеш)
+const BOAT = { L: 8.4, x0: -4.1, N: 16 };
+function boatSec(t) {
+  const B = 1.3 * (t < 0.45 ? 0.9 + 0.1 * (t / 0.45) : Math.pow(Math.max(0, Math.cos(((t - 0.45) / 0.55) * Math.PI / 2)), 0.75));
+  const K = t > 0.6 ? 0.85 * Math.pow((t - 0.6) / 0.4, 2) : 0;   // киль к носу поднимается
+  const G = 1.25 + 0.35 * t * t;                                    // борт к носу выше
+  return { x: BOAT.x0 + t * BOAT.L, B, K, G, C: K + (G - K) * 0.38 };
+}
+// part: 'bottom' — днище (киль → скула), 'top' — борта (скула → планширь), 'deck' — палуба, 'transom' — транец;
+// inner — изнанка обшивки (у недостроенной лодки сверху видно внутрь)
+function gBoatHull(part, inner = false) {
+  const o = [], S = [], sg = inner ? -1 : 1;
+  for (let i = 0; i <= BOAT.N; i++) S.push(boatSec(i / BOAT.N));
+  const segs = part === 'bottom' ? [(s) => [[s.C, -s.B * 0.86], [s.K, 0]], (s) => [[s.K, 0], [s.C, s.B * 0.86]]]
+    : part === 'top' ? [(s) => [[s.G, -s.B], [s.C, -s.B * 0.86]], (s) => [[s.C, s.B * 0.86], [s.G, s.B]]] : [];
+  for (let i = 0; i < BOAT.N; i++) {
+    const a = S[i], b = S[i + 1];
+    for (const f of segs) {
+      const [pa, qa] = f(a), [pb, qb] = f(b);
+      const dy = (qa[0] - pa[0]) || (qb[0] - pb[0]), dz = (qa[1] - pa[1]) || (qb[1] - pb[1]);
+      kQuad(o, [a.x, pa[0], pa[1]], [a.x, qa[0], qa[1]], [b.x, qb[0], qb[1]], [b.x, pb[0], pb[1]], [0, -dz * sg, dy * sg]);
+    }
+    if (part === 'deck') kQuad(o, [a.x, a.G, -a.B], [a.x, a.G, a.B], [b.x, b.G, b.B], [b.x, b.G, -b.B], [0, 1, 0]);
+  }
+  if (part === 'transom') {
+    const s = S[0], c = [s.x, (s.G + s.K) / 2, 0];
+    const ring = [[s.G, -s.B], [s.C, -s.B * 0.86], [s.K, 0], [s.C, s.B * 0.86], [s.G, s.B], [s.G, -s.B]];
+    for (let j = 0; j < ring.length - 1; j++) kTri(o, c, [s.x, ring[j][0], ring[j][1]], [s.x, ring[j + 1][0], ring[j + 1][1]], [-sg, 0, 0]);
+  }
+  return o;
+}
+const BOAT_COLORS = [0xf1eee6, 0x23466e, 0x2e6b4f];   // борта: белый, синий, зелёный — у каждого стапеля свой
+const BOAT_GEO = {};
+function boatGeo(key) {
+  if (BOAT_GEO[key]) return BOAT_GEO[key];
+  const raw = 0xdcb27a, rawIn = 0xb88a55;
+  let k;
+  if (key === 'keel') {
+    k = new Kit(151);
+    const pts = [];
+    for (let i = 0; i <= BOAT.N; i++) { const s = boatSec(i / BOAT.N); pts.push([s.x, s.K + 0.04, 0]); }
+    k.pipe(CR.woodDark, pts, 0.09, { surf: SURF.wood, n: 6 });
+    const s = boatSec(0);
+    k.box(CR.woodDark, s.x + 0.05, (s.G + s.K) / 2, 0, 0.1, s.G - s.K, 0.16, { surf: SURF.wood });   // ахтерштевень
+  } else if (key.startsWith('frame')) {   // шпангоут: frame2, frame4 … — по номеру сечения
+    k = new Kit(160 + +key.slice(5));
+    const s = boatSec(+key.slice(5) / BOAT.N);
+    k.pipe(0xc99a5e, [[s.x, s.G, -s.B], [s.x, s.C, -s.B * 0.86], [s.x, s.K + 0.05, 0], [s.x, s.C, s.B * 0.86], [s.x, s.G, s.B]], 0.05, { surf: SURF.wood, n: 6 });
+  } else if (key === 'bottomRaw' || key === 'topRaw') {
+    k = new Kit(key === 'bottomRaw' ? 152 : 153);
+    const part = key === 'bottomRaw' ? 'bottom' : 'top';
+    k.put(gBoatHull(part), raw, { surf: SURF.wood, grain: 0, jit: 0.04 });
+    k.put(gBoatHull(part, true), rawIn, { surf: SURF.wood, grain: 0 });
+    if (part === 'top') { k.put(gBoatHull('transom'), raw, { surf: SURF.wood, grain: 1 }); k.put(gBoatHull('transom', true), rawIn, { surf: SURF.wood, grain: 1 }); }
+  } else if (key === 'deck') {
+    k = new Kit(154);
+    k.put(gBoatHull('deck'), 0xb98150, { surf: SURF.wood, grain: 0 });
+  } else if (key === 'cabin') {   // рубка: белые стенки, тёмные окна, крыша с козырьком, мачта с огнём
+    k = new Kit(155);
+    const y0 = 1.28, h = 0.95;
+    k.box(0xf4f1ea, -0.2, y0 + h / 2, 0, 2.2, h, 1.7, { surf: SURF.paint, b: 0.06 });
+    for (const z of [-0.855, 0.855]) k.box(CR.glass, -0.1, y0 + 0.66, z, 1.7, 0.3, 0.02, { surf: SURF.glass, b: 0 });
+    k.box(CR.glass, 0.905, y0 + 0.66, 0, 0.02, 0.3, 1.36, { surf: SURF.glass, b: 0 });
+    k.box(0x23466e, -0.25, y0 + h + 0.05, 0, 2.5, 0.08, 1.9, { surf: SURF.paint, b: 0.03 });
+    k.cyl(CR.steel, -0.8, y0 + h + 0.4, 0, 0.03, 0.72, { n: 6, surf: SURF.steel });
+    k.cyl(0xffd84a, -0.8, y0 + h + 0.8, 0, 0.06, 0.08, { n: 8, surf: SURF.plastic });
+    k.lathe(0xf05a28, -1.1, y0 + 0.5, 0.86, [[0.1, -0.04], [0.2, -0.04], [0.2, 0.04], [0.1, 0.04]], { n: 12, rot: [Math.PI / 2, 0, 0], surf: SURF.plastic });   // спасательный круг
+  } else if (key === 'details') {   // леера на баке и флаг на корме
+    k = new Kit(156);
+    for (const sd of [-1, 1]) {
+      const pts = [];
+      for (let t = 0.6; t <= 0.97; t += 0.074) { const s = boatSec(t); pts.push([s.x, s.G + 0.38, sd * s.B * 0.9]); }
+      k.pipe(CR.steel, pts, 0.02, { surf: SURF.steel, n: 5 });
+      for (const p of pts) k.cyl(CR.steel, p[0], p[1] - 0.19, p[2], 0.018, 0.38, { n: 5, surf: SURF.steel });
+    }
+    const s = boatSec(0.02);
+    k.cyl(CR.steel, s.x, s.G + 0.45, 0, 0.022, 0.9, { n: 6, surf: SURF.steel });
+    k.box(0xd23a2f, s.x - 0.27, s.G + 0.75, 0, 0.5, 0.3, 0.02, { surf: SURF.cloth, b: 0 });
+  } else if (key.startsWith('paint')) {   // покрашенный корпус: днище красное, борта — BOAT_COLORS[n]
+    k = new Kit(157);
+    const col = BOAT_COLORS[+key.slice(5)] || BOAT_COLORS[0];
+    k.put(gBoatHull('bottom'), 0xa33b30, { surf: SURF.paint });
+    k.put(gBoatHull('top'), col, { surf: SURF.paint, fjit: 0.02 });
+    k.put(gBoatHull('transom'), col, { surf: SURF.paint });
+  }
+  const g = k.geo();
+  BOAT_GEO[key] = g;
+  return g;
+}
+const BOAT_FRAMES = [2, 4, 6, 8, 10, 12, 14];
+function boatMesh(key) { const m = new THREE.Mesh(boatGeo(key), MAT.flat); m.castShadow = true; m.receiveShadow = true; return m; }
+// готовая лодка (спущенная на воду, для витрины): покрашенный корпус, палуба, рубка, леера
+function ownBoat(color = 0) {
+  const g = new THREE.Group();
+  for (const key of ['paint' + color, 'deck', 'cabin', 'details']) g.add(boatMesh(key));
+  return { g, anim: () => {} };
+}
+
+// Стапель: бетонный спуск в море с рельсами, кильблоки, леса с северной стороны, лебёдка наверху.
+// Лодка стоит на кильблоках параллельно спуску; спуск — от верха (запад) к воде (восток), в осях станка вода с x = 6.5
+const SLIP = { x0: -5.8, y0: 0.9, k: 0.069, x1: 13, bx: -1.2, lift: 0.32 };
+const SLIP_A = Math.atan(SLIP.k);
+function slipY(x) { return SLIP.y0 - (x - SLIP.x0) * SLIP.k; }
+function ownSlipway(id) {
+  const k = new Kit(141);
+  // сам спуск: профиль сбоку, вытянутый поперёк; под водой не виден (море непрозрачное)
+  k.prism(CR.concrete, 0, 0, 0, [[SLIP.x0, -0.02], [SLIP.x0, SLIP.y0], [SLIP.x1, slipY(SLIP.x1)], [SLIP.x1, -0.9], [6.5, -0.9], [6.5, -0.02]], 3.4, { surf: SURF.concrete });
+  for (const z of [-0.75, 0.75]) k.tube(CR.steel, [SLIP.x0 + 0.1, slipY(SLIP.x0 + 0.1) + 0.05, z], [SLIP.x1, slipY(SLIP.x1) + 0.05, z], 0.05, { surf: SURF.steel, n: 6 });
+  for (let x = SLIP.x0 + 0.6; x < 6.4; x += 1.6) k.box(CR.woodDark, x, slipY(x) + 0.02, 0, 0.22, 0.06, 2.2, { surf: SURF.wood, rot: [0, 0, -SLIP_A] });
+  // кильблоки под плоской частью киля
+  for (const x of [-5.0, -3.4, -1.8, -0.4]) {
+    for (let j = 0; j < 3; j++) k.box(j % 2 ? CR.wood : CR.woodDark, x, slipY(x) + 0.055 + j * 0.105, 0, j % 2 ? 0.5 : 0.24, 0.1, 0.9, { surf: SURF.wood, rot: [0, 0, -SLIP_A], jit: 0.08 });
+  }
+  // леса с северной стороны: стойки, два яруса настила, раскосы
+  const zs = -2.05;
+  for (const x of [-5.6, -3.0, -0.4, 2.2]) k.box(CR.woodDark, x, 1.3, zs, 0.12, 2.6, 0.12, { surf: SURF.wood });
+  for (const y of [1.3, 2.1]) k.box(CR.wood, -1.7, y, zs + 0.12, 8.2, 0.07, 0.42, { surf: SURF.wood, jit: 0.05 });
+  for (const x of [-5.6, -0.4]) k.tube(CR.woodDark, [x, 0.1, zs - 0.05], [x + 2.6, 2.5, zs - 0.05], 0.04, { surf: SURF.wood, n: 5 });
+  // лебёдка наверху спуска и кнехты у воды
+  k.box(CR.iron, SLIP.x0 + 0.5, SLIP.y0 + 0.25, 0, 0.6, 0.5, 1.2, { surf: SURF.metal, b: 0.04 });
+  k.cyl(CR.orange, SLIP.x0 + 0.5, SLIP.y0 + 0.62, 0, 0.22, 0.9, { axis: 'z', n: 12, surf: SURF.metal, b: 0.02 });
+  for (const z of [-2.1, 2.1]) { k.cyl(CR.ironDark, 5.8, 0.2, z, 0.14, 0.4, { n: 10, surf: SURF.metal }); k.cyl(CR.ironDark, 5.8, 0.42, z, 0.2, 0.06, { n: 10, surf: SURF.metal }); }
+  const body = k.mesh({ ao: [0.4, 0.7] });
+  // лодка на стапеле: по этапам постройки. Цвет бортов — свой у каждого стапеля (по номеру в id)
+  const color = (parseInt(String(id).replace(/\D/g, ''), 10) || 1) - 1;
+  const boat = new THREE.Group();
+  boat.position.set(SLIP.bx, slipY(SLIP.bx) + SLIP.lift, 0);
+  boat.rotation.z = -SLIP_A;
+  const P = { keel: boatMesh('keel'), bottomRaw: boatMesh('bottomRaw'), topRaw: boatMesh('topRaw'), deck: boatMesh('deck'),
+    cabin: boatMesh('cabin'), paint: boatMesh('paint' + (color % BOAT_COLORS.length)), details: boatMesh('details') };
+  const frames = BOAT_FRAMES.map((i) => boatMesh('frame' + i));
+  for (const key in P) boat.add(P[key]);
+  for (const f of frames) boat.add(f);
+  // для «призрака» площадки — готовая лодка
+  const show = (p) => {
+    P.keel.visible = p >= 0 && p < 0.9;
+    frames.forEach((f, i) => { f.visible = p >= 0.08 + i * 0.035 && p < 0.9; });
+    P.bottomRaw.visible = p >= 0.36 && p < 0.9;
+    P.topRaw.visible = p >= 0.52 && p < 0.9;
+    P.deck.visible = p >= 0.68;
+    P.cabin.visible = p >= 0.8;
+    P.paint.visible = p >= 0.9;
+    P.details.visible = p >= 0.95;
+  };
+  show(1);
+  return { g: kParts([body, boat]), color: color % BOAT_COLORS.length, anim: (t, on, ss) => show(ss && ss.cur >= 0 ? ss.prog : -1) };
+}
+
 // ───────── список своих моделей ─────────
 // items — предметы (геометрия для InstancedMesh), st — станки, props — постройки ({ g, anim })
 const OWN = {
   items: { log: ownLog, board: ownBoard, beam: ownBeam, panel: ownPanel, legs: ownLegs, sawdust: ownSawdust, cardboard: ownCardboard, bill: ownBill },
-  st: { saw: ownSaw, beamer: ownBeamer, lathe: ownLathe, press: ownPress, bench: ownBench, paper: ownPaper, boxer: ownBoxer, packer: ownPacker },
+  st: { saw: ownSaw, beamer: ownBeamer, lathe: ownLathe, press: ownPress, bench: ownBench, paper: ownPaper, boxer: ownBoxer, packer: ownPacker, slip: ownSlipway },
   props: { stall: ownStall, rack: ownRack, tcrane: ownTowerCrane, pcrane: ownPortCrane, compressor: ownCompressor, trash: ownTrash, tower: ownTowerBase },
   trucks: { logTruck: ownLogTruck },
 };
@@ -1247,13 +1398,14 @@ const OWN_GROUPS = [
   { title: 'Свои: станки (в работе)', fit: 4.6, cell: 5.6, items: ['own/saw', 'own/beamer', 'own/lathe', 'own/press', 'own/bench', 'own/paper', 'own/boxer', 'own/packer'] },
   { title: 'Свои: постройки и лесовоз', fit: 4.6, cell: 5.6, items: ['own/stall', 'own/rack', 'own/compressor', 'own/trash', 'own/logTruck'] },
   { title: 'Свои: небоскрёб и краны', fit: 9, cell: 10.5, items: ['own/towerFloor', 'own/scaffold', 'own/tower', 'own/tcrane', 'own/pcrane'] },
+  { title: 'Свои: верфь', fit: 12, cell: 14, items: ['own/slip', 'own/boat'] },
 ];
 const OWN_NAMES = {
   log: 'бревно', board: 'доска', beam: 'брус', panel: 'мебельный щит', legs: 'ножки', sawdust: 'мешок опилок', cardboard: 'картон', bill: 'деньги',
   saw: 'ленточная пилорама', beamer: 'брусовальный', lathe: 'токарный', press: 'клеильный пресс', bench: 'верстак', paper: 'картонная машина',
   boxer: 'коробочный', packer: 'упаковка', stall: 'прилавок досок', rack: 'стеллаж магазина', compressor: 'пневмопровод', trash: 'мусорный контейнер',
   logTruck: 'лесовоз', towerFloor: 'этажи и крыша', scaffold: 'леса', tower: 'цоколь',
-  tcrane: 'башенный кран', pcrane: 'портовый кран',
+  tcrane: 'башенный кран', pcrane: 'портовый кран', slip: 'стапель', boat: 'катер',
 };
 // своя модель как объект сцены: { obj, anim }
 function ownShowcase(key) {
@@ -1270,6 +1422,7 @@ function ownShowcase(key) {
     return { obj: g };
   }
   if (k === 'scaffold') return { obj: ownScaffold() };
+  if (k === 'boat') return { obj: ownBoat(0).g };
   return null;
 }
 // какие свои модели сейчас стоят в игре (для ★ в витрине)

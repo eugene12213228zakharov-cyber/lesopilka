@@ -53,6 +53,8 @@ class Sfx {
       case 'chop': this.tone(180, 0.09, 'sawtooth', 0.06, -60); break;
       case 'hit': this.tone(110, 0.25, 'square', 0.12, -60); this.tone(70, 0.35, 'sawtooth', 0.1, -30, 0.03); break;
       case 'horn': this.tone(392, 0.22, 'square', 0.05); this.tone(330, 0.3, 'square', 0.05, 0, 0.26); break;
+      // спуск лодки: низкий гудок и всплеск
+      case 'launch': this.tone(147, 0.7, 'sawtooth', 0.045); this.tone(196, 0.7, 'sawtooth', 0.035, 0, 0.04); this.tone(120, 0.45, 'triangle', 0.08, -70, 1.9); break;
     }
   }
 
@@ -69,5 +71,6 @@ class Sfx {
     else if (e.t === 'hit') this.play('hit');
     else if (e.t === 'hitW' && dist(e.x, e.z, g.pl.x, g.pl.z) < 30) this.play('hit');
     else if (e.t === 'horn' && dist(e.x, e.z, g.pl.x, g.pl.z) < 30) this.play('horn');
+    else if (e.t === 'launch' && STATIONS[e.st] && dist(STATIONS[e.st].x, STATIONS[e.st].z, g.pl.x, g.pl.z) < 40) this.play('launch');
   }
 }

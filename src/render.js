@@ -138,6 +138,7 @@ class View {
       this.inst[id] = m;
     }
     this.stObjs = {}; this.propObjs = {}; this.padObjs = {}; this.pileObjs = {}; this.fenceObjs = {};
+    this.launches = []; this.splashes = [];   // верфь: спущенные лодки и всплески на воде
     this.plotObjs = [];
     this.agentObjs = new Map();
     this.truckObjs = new Map();
@@ -318,7 +319,7 @@ class View {
     const sc = this.scene;
     sc.add(this.grassField());
     // покрытия зон: утоптанная земля с опилками, лесная почва, бетон цехов, плитка магазина, плиты порта
-    const zoneKind = { z1: 'dirt', z2: 'forest', z3: 'concrete', z4: 'tiles', z5: 'concrete', z6: 'port' };
+    const zoneKind = { z1: 'dirt', z2: 'forest', z3: 'concrete', z4: 'tiles', z5: 'concrete', z6: 'port', z7: 'port' };
     const curb = new Kit(31);
     for (const z of ZONES) {
       const r = z.rect;
@@ -405,8 +406,8 @@ class View {
     if (ch) { ch.position.set(84, 0, 96); this.scene.add(ch); }
     // штабеля брёвен у склада и на делянке, контейнеры в порту
     this.instK(MODEL_OF.logStack, { size: [3.2, null, null], longX: true }, [[-44.6, 6.8, Math.PI / 2], [-44.6, 15.5, Math.PI / 2], [-51.8, 44.5, 0]]);
-    // контейнеры — южнее порта, в стороне от площадок
-    MODEL_OF.containers.forEach((k, i) => this.instK(k, { size: [6, null, null], longX: true }, [[60 + (i % 2) * 7, 54 + i * 3.4, 0]]));
+    // контейнеры — в южной полосе порта (южнее — верфь)
+    MODEL_OF.containers.forEach((k, i) => this.instK(k, { size: [6, null, null], longX: true }, [[60 + i * 7, 47, 0]]));
     // камни и кусты на траве — вне зон, дорог и площадок
     const free = (x, z) => {
       if (Math.abs(z) < 5 || (Math.abs(x) < 5 && z > 0)) return false;
@@ -804,6 +805,8 @@ class View {
         }
         this.flights.push({ it: 'bill', from, toFixed: to, t: -i * 0.04, dur: 0.3 });
       }
+    } else if (e.t === 'launch') {
+      this.launchBoat(e.st);
     } else if (e.t === 'sell') {
       if (dist(e.x, e.z, g.pl.x, g.pl.z) > 40) return;
       const k = e.pile;
@@ -847,7 +850,7 @@ class View {
     // станки и декорации
     for (const id in this.stObjs) {
       const ss = s.st[id];
-      this.stObjs[id].anim(this.t, !!(ss && ss.cur >= 0));
+      this.stObjs[id].anim(this.t, !!(ss && ss.cur >= 0), ss);   // стапелю нужен и ход постройки (ss.prog)
     }
     for (const id in this.propObjs) {
       const o = this.propObjs[id];
@@ -920,6 +923,7 @@ class View {
     this.syncBelt(near);
 
     this.syncShip();
+    this.syncShipyard(dt);
     this.syncPlots();
     this.syncFlights(dt);
     this.syncPads();
@@ -1142,6 +1146,110 @@ class View {
       const col = i % 4, row = Math.floor(i / 4) % 10, layer = Math.floor(i / 40);
       this.addInst(it, x - 1.6 + col * 1.05, 2.1 + layer * ITEM_VIS[it].h, SHIP_DOCK[1] - 3.5 + row * 1.0, 0);
     }
+  }
+
+  // ───────── верфь ─────────
+  // лодка достроена: съезжает по стапелю в воду, всплывает, выравнивается и уходит в море на восток (за туманом — убираем)
+  launchBoat(stId) {
+    const st = STATIONS[stId], o = this.stObjs[stId];
+    if (!st) return;
+    const b = ownBoat(o && o.color !== undefined ? o.color : 0).g;
+    b.position.set(st.x + SLIP.bx, slipY(SLIP.bx) + SLIP.lift, st.z);
+    b.rotation.z = -SLIP_A;
+    this.scene.add(b);
+    this.launches.push({ b, st, t: 0, splash: false });
+  }
+
+  syncShipyard(dt) {
+    const SLIDE = 2.4, RUN = 14;   // по стапелю — 2.4 с на 14 м, с разгоном
+    for (let i = this.launches.length - 1; i >= 0; i--) {
+      const L = this.launches[i], b = L.b, st = L.st;
+      L.t += dt;
+      if (L.t < SLIDE) {
+        const k = L.t / SLIDE, x = SLIP.bx + RUN * k * k;
+        b.position.set(st.x + x, slipY(x) + SLIP.lift, st.z);
+        b.rotation.z = -SLIP_A;
+        if (!L.splash && x > 7.5) { L.splash = true; this.splash(st.x + x + 3, st.z); }
+      } else {
+        const u = L.t - SLIDE, e = Math.min(1, u / 1.2), s = e * e * (3 - 2 * e);
+        // сошла со стапеля на ~11.7 м/с: 1.2 с тормозит о воду до 1.6 м/с, 2 с разгоняется своим ходом до 5.6 м/с
+        let x;
+        if (u < 1.2) x = 11.7 * u - 4.2 * u * u;
+        else if (u < 3.2) { const w = u - 1.2; x = 7.99 + 1.6 * w + w * w; }
+        else x = 15.19 + 5.6 * (u - 3.2);
+        x += st.x + SLIP.bx + RUN;
+        const y0 = slipY(SLIP.bx + RUN) + SLIP.lift;
+        b.position.set(x, y0 + (-0.42 - y0) * s + Math.sin(L.t * 2.1) * 0.05, st.z);
+        b.rotation.z = -SLIP_A * (1 - s) + Math.sin(L.t * 1.3) * 0.02;
+        b.rotation.x = Math.sin(L.t * 1.7) * 0.03;
+        if (x > MAP.x1 + 70 || L.t > 40) { this.scene.remove(b); this.launches.splice(i, 1); }
+      }
+    }
+    // всплески: белое кольцо расходится по воде и тает
+    for (let i = this.splashes.length - 1; i >= 0; i--) {
+      const S = this.splashes[i];
+      S.t += dt;
+      const k = S.t / 1.4;
+      S.m.scale.setScalar(1 + k * 4);
+      S.m.material.opacity = 0.75 * (1 - k);
+      if (k >= 1) { this.scene.remove(S.m); S.m.geometry.dispose(); S.m.material.dispose(); this.splashes.splice(i, 1); }
+    }
+    this.syncRaft();
+  }
+
+  splash(x, z) {
+    const m = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.5, 28), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(x, 0.06, z);
+    this.scene.add(m);
+    this.splashes.push({ m, t: 0 });
+  }
+
+  // Буксир-толкач с плотом бруса: подходит к берегу к выгрузке (сим — s.raftT, раз в TUNE.raftT), стоит, уходит пустым.
+  // Время — из симуляции, поэтому после перемотки и загрузки плот там, где должен быть
+  syncRaft() {
+    const g = this.g, on = !!g.s.padDone.p_raft && g.open.z7;
+    if (!on) { if (this.raftObj) this.raftObj.g.visible = false; return; }
+    if (!this.raftObj) this.raftObj = this.buildRaft();
+    const R = this.raftObj, T = TUNE.raftT, t = g.s.raftT || 0, far = 42;
+    // до выгрузки 8 с — подходит (гружёный); после — 3 с у берега, 8 с отходит (пустой)
+    let d, loaded;
+    if (t > T - 8) { const k = (T - t) / 8; d = far * k * k; loaded = true; }
+    else if (t < 3) { d = 0; loaded = false; }
+    else if (t < 11) { const k = (t - 3) / 8; d = far * k * k; loaded = false; }
+    else { R.g.visible = false; return; }
+    R.g.visible = true;
+    R.g.position.set(RAFT.x + d, Math.sin(this.t * 1.6) * 0.04, RAFT.z);
+    R.cargo.visible = loaded;
+  }
+
+  buildRaft() {
+    const grp = new THREE.Group();
+    // плот из брёвен (5.4 × 2.6 м), на нём — брус штабелем
+    const k = new Kit(171);
+    for (let i = 0; i < 7; i++) k.cyl(i % 2 ? CR.bark : 0x7a5535, 0, 0.02, -1.14 + i * 0.38, 0.19, 5.4, { axis: 'x', n: 8, surf: SURF.wood, end: CR.barkEnd, jit: 0.06 });
+    for (const x of [-2.1, 0, 2.1]) k.box(0x6b4a2e, x, 0.22, 0, 0.14, 0.08, 2.7, { surf: SURF.wood });
+    const base = k.mesh();
+    const c = new Kit(172);
+    for (let row = 0; row < 3; row++) for (let j = 0; j < 5; j++) c.box(CR.wood, 0, 0.36 + row * 0.19, -0.9 + j * 0.45, 4.6, 0.17, 0.4, { surf: SURF.wood, jit: 0.07, end: CR.woodEnd, grain: 0 });
+    c.box(0xd8c79a, 0, 0.93, 0, 0.06, 0.02, 2.4, { surf: SURF.cloth });   // стяжка
+    const cargo = c.mesh();
+    grp.add(base, cargo);
+    // толкач — сзади (с моря), носом к берегу
+    let tug = this.K && window.LIB_OK ? kMesh(MODEL_OF.tug, { size: [null, null, 5.2] }) : null;
+    if (tug) { tug.rotation.y = -Math.PI / 2; tug.position.set(5.6, -0.25, 0); }
+    else {
+      const t = new Kit(173);
+      t.box(0xb5332a, 0, 0.2, 0, 4.4, 0.8, 2.0, { surf: SURF.paint, b: 0.2 });
+      t.box(0xf1eee6, 0.4, 1.05, 0, 1.6, 0.9, 1.4, { surf: SURF.paint, b: 0.05 });
+      t.box(CR.glass, -0.41, 1.25, 0, 0.02, 0.3, 1.1, { surf: SURF.glass, b: 0 });
+      t.cyl(0x26282a, 0.9, 1.8, 0, 0.18, 0.7, { n: 10, surf: SURF.metal });
+      tug = t.mesh(); tug.position.set(5.2, -0.1, 0);
+    }
+    grp.add(tug);
+    grp.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+    this.scene.add(grp);
+    return { g: grp, cargo };
   }
 
   syncPlots() {
