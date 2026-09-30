@@ -39,9 +39,11 @@ window.lesopilkaReplace = (data) => {
   const sfx = new Sfx();
   const view = new View($('c'), game, $('labels'));
   const ui = new UI(game, sfx);
+  ui.view = view;   // список рабочих подсвечивает их в мире и показывает камерой
   const input = new Input($('c'), game, view, ui, sfx);
   window.__game = game;
   window.__view = view;
+  window.__ui = ui;
   window.__input = input;
   $('loading').remove();
   if (TEST_MODE) document.title = 'Лесопилка — ТЕСТ';

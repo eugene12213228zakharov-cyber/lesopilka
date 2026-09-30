@@ -147,14 +147,14 @@ function buildItemModels() {
 }
 
 // ───────── человечки ─────────
-// style: player | worker | cust. Возвращает группу и суставы для анимации шага.
-function buildCharacter(style, seed = 0) {
+// style: player | worker | cust; helmet — цвет каски рабочего (по зоне). Возвращает группу и суставы для анимации шага.
+function buildCharacter(style, seed = 0, helmet = null) {
   const shirts = [0xe67e22, 0x16a085, 0x8e44ad, 0xd35400, 0x2980b9, 0xc0392b, 0x27ae60, 0xf1c40f, 0x7f8c8d, 0xe84393];
   const pants = [0x34495e, 0x2c3e50, 0x5d4037, 0x455a64, 0x1e272e];
   const hair = [0x3b2a1e, 0x1b1b1b, 0x7a4b2a, 0xd9b36b, 0x9e9e9e];
   let shirt, pant, hat, vest = null;
   if (style === 'player') { shirt = 0x2f7fd0; pant = 0x1f4f86; hat = 0xff8c1a; }
-  else if (style === 'worker') { shirt = 0x5b6e7a; pant = 0x37474f; hat = 0xffd43b; vest = 0xff9f1a; }
+  else if (style === 'worker') { shirt = 0x5b6e7a; pant = 0x37474f; hat = helmet || 0xffd43b; vest = 0xff9f1a; }
   else { shirt = shirts[seed % shirts.length]; pant = pants[(seed >> 3) % pants.length]; hat = null; }
   const g = new THREE.Group();
   const torso = [B(shirt, 0, 1.06, 0, 0.5, 0.62, 0.3), S(COL.skin, 0, 1.56, 0, 0.21)];

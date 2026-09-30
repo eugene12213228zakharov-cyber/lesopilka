@@ -234,7 +234,7 @@ function charClips(key) {
   return out;
 }
 
-// каска на кость головы — оранжевая у игрока, жёлтая у рабочих
+// каска на кость головы — оранжевая у игрока, у рабочих — цвета их зоны (по умолчанию жёлтая)
 function addHelmet(root, color) {
   let head = null, headMesh = null;
   root.traverse((o) => { if (!head && o.name === 'head') head = o; if (!headMesh && o.name === 'head-mesh') headMesh = o; });
@@ -259,8 +259,8 @@ function addHelmet(root, color) {
   head.add(helmet);
 }
 
-// style: player | worker | cust. Возвращает объект для View: g, set(moving, speed, carry, dt), stackY, stackFwd
-function makeCharacterK(style, seed) {
+// style: player | worker | cust; helmet — цвет каски рабочего. Возвращает объект для View: g, set(moving, speed, carry, dt), stackY, stackFwd
+function makeCharacterK(style, seed, helmet) {
   const list = style === 'player' ? [MODEL_OF.player] : style === 'worker' ? MODEL_OF.workers : MODEL_OF.customers;
   const key = list[Math.abs(seed | 0) % list.length];
   const root = LIB.clone(key);
@@ -274,7 +274,7 @@ function makeCharacterK(style, seed) {
   });
   const size = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3());
   root.scale.setScalar(CHAR_H / Math.max(0.01, size.y));
-  if (style !== 'cust') addHelmet(root, style === 'player' ? 0xff8c1a : 0xffd43b);
+  if (style !== 'cust') addHelmet(root, style === 'player' ? 0xff8c1a : helmet || 0xffd43b);
   const g = new THREE.Group();
   g.add(root);
   if (style === 'player') {

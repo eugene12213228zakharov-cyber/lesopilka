@@ -20,6 +20,15 @@ class UI {
     else $('bFb').style.display = 'none';   // форма не подключена — отзывы слать некуда, кнопку не показываем
     $('pClose').onclick = () => this.close();
     $('pBody').addEventListener('click', (e) => this.onPanelClick(e));
+    // список рабочих: навёл на строку — этот рабочий подсвечен в мире (кольцо и номер над головой)
+    $('pBody').addEventListener('mouseover', (e) => {
+      const row = e.target.closest('.wrow');
+      const w = row && this.panel === 'work' ? this.g.workers[+row.dataset.row.slice(1)] : null;
+      if (!this.view) return;
+      if (w) { this.view.hl = w; this.view.hlT = 1e9; this.view.hover = true; }
+      else if (this.view.hover) { this.view.hover = false; this.view.hlT = 0.6; }
+    });
+    $('pBody').addEventListener('mouseleave', () => { if (this.view && this.view.hover) { this.view.hover = false; this.view.hlT = 0.6; } });
     $('modal').addEventListener('click', (e) => { if (e.target.id === 'modal' || e.target.dataset.close !== undefined) this.hideModal(); });
   }
 
@@ -99,6 +108,7 @@ class UI {
       $('upgBadge').style.display = can ? '' : 'none';
       $('bUpg').classList.toggle('hot', can > 0);
       if (this.panel) this.refresh();
+      this.shipCard();
     }
     const goal = g.goal;
     const gt = goal ? goal.text : '';
@@ -114,9 +124,35 @@ class UI {
     if ($('carry').textContent !== carry) { $('carry').textContent = carry; $('carry').style.display = carry ? '' : 'none'; }
   }
 
+  // Корабль — карточка слева под этажом: сколько ещё ждёт, что везти и сколько уже на складе порта
+  // (отзыв: «чтобы не бегать в порт, чтобы посмотреть, что нужно принести»)
+  shipCard() {
+    const g = this.g, sh = g.s.ship;
+    let h = '';
+    if (sh && sh.state === 'docked' && sh.need) {
+      h = `<div class="st${sh.left < 45 ? ' warn' : ''}">🚢 Корабль ждёт <b>${fmtTime(sh.left)}</b></div>`;
+      for (const it in sh.need) {
+        const got = Math.min(sh.got[it] || 0, sh.need[it]), done = got >= sh.need[it];
+        const wh = !done && g.pileSet.has('pwh') ? g.count('pwh', it) : 0;
+        h += `<div class="row${done ? ' done' : ''}"><span>${ITEMS[it].name}</span><span>${got}/${sh.need[it]}${wh ? ` <i>на складе ${wh}</i>` : ''}</span></div>`;
+      }
+      h += `<div class="rw">Награда ${fmtMoney(sh.reward)}</div>`;
+    } else if (sh && sh.state === 'away') h = `<div class="st">🚢 Корабль придёт через ${fmtTime(sh.t)}</div>`;
+    else if (sh && sh.state === 'in') h = '<div class="st">🚢 Корабль заходит в порт</div>';
+    else if (sh && sh.state === 'out') h = `<div class="st">🚢 ${sh.result === 'ok' ? 'Заказ выполнен' : 'Корабль ушёл'}</div>`;
+    if (h !== this.shipHtml) { this.shipHtml = h; $('shipCard').innerHTML = h; $('shipCard').style.display = h ? '' : 'none'; }
+  }
+
   // ───────── панели ─────────
-  toggle(name) { if (this.panel === name) this.close(); else { this.panel = name; this.render(); $('panel').classList.remove('hidden'); } }
-  close() { this.panel = null; $('panel').classList.add('hidden'); }
+  toggle(name) { if (this.panel === name) this.close(); else { this.panel = name; this.render(); $('panel').classList.remove('hidden'); } this.tags(); }
+  close() { this.panel = null; $('panel').classList.add('hidden'); this.tags(); }
+  // пока открыт список рабочих — над головами их номера
+  tags() {
+    const v = this.view;
+    if (!v) return;
+    v.showTags = this.panel === 'work';
+    if (this.panel !== 'work' && v.hover) { v.hover = false; v.hlT = 0.6; }   // закрыли список с мышью на строке — подсветку гасим
+  }
 
   render() {
     const g = this.g, s = g.s, body = $('pBody');
@@ -156,11 +192,23 @@ class UI {
     } else if (this.panel === 'work') {
       h += `<label class="chk"><input type="checkbox" data-prio ${s.sitePriority !== false ? 'checked' : ''}> Стройка в приоритете — рабочие продаж не трогают то, что нужно этажу (заберут строители)</label>`;
       if (!g.workers.length) h += '<div class="note">Пока никого. Рабочих нанимают на площадках с человечком.</div>';
+      else h += '<div class="note small">Номер из списка — над головой рабочего, каска — цвета цеха. Наведи на строку — рабочий подсветится, 📍 — камера к нему.</div>';
+      // по цехам, в каждом — по порядку найма; номер — сквозной, как над головой
+      const groups = ZONES.map((z) => ({ id: z.id, name: z.name, list: [] })).concat([{ id: 'c', name: 'Стройка', list: [] }]);
       g.workers.forEach((w, i) => {
-        const nm = w.route ? ROUTES[w.route].name : ROLE_NAMES[w.role];
-        const where = PAD_BY_ID[w.pad] ? (ZONE_BY_ID[PAD_BY_ID[w.pad].zone] || { name: 'Стройка' }).name : '';
-        h += `<div class="wrow" data-row="w${i}"><div class="un"><div class="nm">${nm}</div><div class="lv">${where}</div><div class="vv"></div></div><button class="tog" data-w="${i}"></button></div>`;
+        const pad = PAD_BY_ID[w.pad], zid = pad ? workerZone(pad) : 'c';
+        (groups.find((gr) => gr.id === zid) || groups[groups.length - 1]).list.push(i);
       });
+      for (const gr of groups) {
+        if (!gr.list.length) continue;
+        const col = '#' + helmetColor(gr.id).toString(16).padStart(6, '0');
+        h += `<div class="sec"><i class="dot" style="background:${col}"></i>${gr.name} — ${gr.list.length}</div>`;
+        for (const i of gr.list) {
+          const w = g.workers[i], nm = w.route ? ROUTES[w.route].name : ROLE_NAMES[w.role];
+          h += `<div class="wrow" data-row="w${i}"><span class="wn" style="border-color:${col}">${i + 1}</span><div class="un"><div class="nm">${nm}</div><div class="vv"></div></div>` +
+            `<button class="show" data-show="${i}" title="Показать, где он">📍</button><button class="tog" data-w="${i}"></button></div>`;
+        }
+      }
     } else if (this.panel === 'menu') {
       const snd = this.audio.on;
       h += `<button class="wide" data-act="sound">${snd ? '🔊 Звук включён' : '🔇 Звук выключен'}</button>`;
@@ -209,8 +257,9 @@ class UI {
       g.workers.forEach((w, i) => {
         const row = body.querySelector(`[data-row="w${i}"]`);
         if (!row) return;
-        const st = !w.on ? 'выключен' : w.task === 'rest' ? 'ждёт работу' : w.task === 'post' ? 'на кассе' : 'работает';
-        row.querySelector('.vv').textContent = st + (w.stack.length ? ` · в руках ${w.stack.length}` : '');
+        const doing = g.workerDoing(w);
+        row.querySelector('.vv').textContent = doing;
+        row.classList.toggle('idle', w.on && w.still > TUNE.idleShow);
         const b = row.querySelector('.tog');
         b.textContent = w.on ? '⏸ Выключить' : '▶ Включить';
         b.classList.toggle('off', !w.on);
@@ -224,6 +273,7 @@ class UI {
     const g = this.g;
     if (t.dataset.upg) { if (g.buyUpgrade(t.dataset.upg)) this.audio.play('upg'); this.refresh(); }
     else if (t.dataset.w !== undefined) { const w = g.workers[+t.dataset.w]; w.on = !w.on; this.refresh(); }
+    else if (t.dataset.show !== undefined) { if (this.view) this.view.focusOn(g.workers[+t.dataset.show]); }
     else if (t.dataset.prio !== undefined) { g.s.sitePriority = t.checked; }
     else if (t.dataset.act === 'sound') { this.audio.toggle(); this.render(); }
     else if (t.dataset.act === 'feedback') this.feedback();

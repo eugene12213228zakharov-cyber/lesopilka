@@ -150,8 +150,20 @@ class View {
     this.buildGoalMarkers();
     this.playerObj = this.charFor(game.pl);
     this.camTarget = new THREE.Vector3(game.pl.x, 0, game.pl.z);
+    this.cx = game.pl.x; this.cz = game.pl.z;   // центр того, что рисуем подробно: куда смотрит камера
+    // рабочие: номера над головой, пока открыт их список (UI ставит showTags); hl — подсвеченный из списка;
+    // focus — камера на время показывает рабочего («📍» в списке)
+    this.showTags = false; this.hl = null; this.focus = null;
+    this.whyCache = new WeakMap();
+    this.hlRing = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.86, 32), new THREE.MeshBasicMaterial({ color: 0x35d0ff, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false }));
+    this.hlRing.rotation.x = -Math.PI / 2;
+    this.hlRing.visible = false;
+    this.scene.add(this.hlRing);
     this.resize();
   }
+
+  // показать рабочего: камера летит к нему и держит несколько секунд (или пока игрок не пошёл)
+  focusOn(w) { this.focus = { a: w, t: 6 }; this.hl = w; this.hlT = 6; }
 
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
@@ -457,7 +469,8 @@ class View {
     let o = this.agentObjs.get(a);
     if (!o) {
       const style = a.kind === 'player' ? 'player' : a.kind === 'worker' ? 'worker' : 'cust';
-      o = (this.K && makeCharacterK(style, style === 'player' ? 0 : (a.look || 0))) || buildCharacter(style, a.look || 0);
+      const pad = a.kind === 'worker' && PAD_BY_ID[a.pad], helmet = pad ? helmetColor(workerZone(pad)) : null;   // каска цвета зоны
+      o = (this.K && makeCharacterK(style, style === 'player' ? 0 : (a.look || 0), helmet)) || buildCharacter(style, a.look || 0, helmet);
       o.phase = 0;
       o.g.position.set(a.x, 0, a.z);
       o.g.rotation.order = 'YXZ';   // наклон (сбила машина) — в своей системе, после поворота
@@ -771,7 +784,10 @@ class View {
     this.syncStatic();
     for (const id in this.inst) this.ic[id] = 0;
     this.labels.begin();
-    const near = (x, z, r = VIEW_R) => Math.abs(x - pl.x) < r && Math.abs(z - pl.z) < r;
+    // подробно рисуем вокруг камеры: обычно она у игрока, но «показать рабочего» уводит её к нему
+    this.cx = this.camTarget.x; this.cz = this.camTarget.z;
+    const cx = this.cx, cz = this.cz;
+    const near = (x, z, r = VIEW_R) => Math.abs(x - cx) < r && Math.abs(z - cz) < r;
     const tmp = {};
 
     // станки и декорации
@@ -818,6 +834,7 @@ class View {
     const seen = new Set([pl, ...g.workers]);
     for (const c of g.cust) { this.syncAgent(c, dt); seen.add(c); }
     for (const [a, o] of this.agentObjs) if (!seen.has(a)) { this.scene.remove(o.g); this.agentObjs.delete(a); }
+    this.workerLabels(dt);
 
     // машины
     const tseen = new Set();
@@ -856,9 +873,11 @@ class View {
 
     for (const id in this.inst) { const m = this.inst[id]; m.count = this.ic[id]; m.instanceMatrix.needsUpdate = true; }
 
-    // камера и солнце
-    const po = this.playerObj.g.position;
-    this.camTarget.lerp(_pos.set(po.x, 0, po.z), 1 - Math.exp(-8 * dt));
+    // камера и солнце: за игроком, а на время «показать рабочего» — за ним (пошёл игрок — камера вернулась)
+    if (this.focus && (pl.moving || (this.focus.t -= dt) <= 0 || g.workers.indexOf(this.focus.a) < 0)) this.focus = null;
+    const fo = this.focus && this.agentObjs.get(this.focus.a);
+    const po = fo ? fo.g.position : this.playerObj.g.position;
+    this.camTarget.lerp(_pos.set(po.x, 0, po.z), 1 - Math.exp(-(fo ? 5 : 8) * dt));
     const ct = this.camTarget, z = this.zoom;
     this.camera.position.set(ct.x, 19 * z, ct.z + 15 * z);
     this.camera.lookAt(ct.x, 0.6, ct.z + 0.5);
@@ -890,13 +909,13 @@ class View {
     } else if (o.g.rotation.x) o.g.rotation.x = 0;
     const moving = a.moving;
     const carry = a.stack.length > 0;
-    const far = Math.abs(a.x - this.g.pl.x) > VIEW_R || Math.abs(a.z - this.g.pl.z) > VIEW_R;
+    const far = Math.abs(a.x - this.cx) > VIEW_R || Math.abs(a.z - this.cz) > VIEW_R;
     o.g.visible = !far;   // далеко — всё равно в тумане: не рисуем и не анимируем
     let bob = 0;
     if (o.model) {
       // человечек Kenney: анимации «стоит / идёт / бежит» + руки «несу стопку»
       if (!far) {
-        const g = this.g, sp = a.kind === 'player' ? g.uv('u_speed') : a.kind === 'worker' ? g.uv('u_wSpeed')
+        const g = this.g, sp = a.kind === 'player' ? g.plSpeed() : a.kind === 'worker' ? g.uv('u_wSpeed')
           : TUNE.custSpeed * (a.state === 'far' || a.state === 'gone' ? 1.3 : 1);   // по тротуару идут бодрее
         o.set(moving, sp, carry, dt);
       }
@@ -924,6 +943,32 @@ class View {
       this.addInst(it, b.x + Math.cos(b.f) * sway, y, b.z - Math.sin(b.f) * sway, b.f);
       y += ITEM_VIS[it].h * 0.92;
     }
+  }
+
+  // Над рабочими: номер из списка (пока он открыт или рабочий подсвечен) и чего ждёт, если стоит дольше TUNE.idleShow.
+  // Причину считает игра (workerWhy) — не чаще раза в 0.4 с на рабочего
+  workerLabels(dt) {
+    const g = this.g;
+    if (this.hl && (this.hlT -= dt) <= 0 && !this.hover) this.hl = null;
+    let ring = null;
+    g.workers.forEach((w, i) => {
+      const o = this.agentObjs.get(w);
+      if (!o || !o.g.visible) return;
+      const p = o.g.position, hl = this.hl === w;
+      if (hl) ring = p;
+      if (!hl && (Math.abs(p.x - this.cx) > 34 || Math.abs(p.z - this.cz) > 28)) return;
+      let why = null;
+      if (!w.on || w.xwait || w.still > TUNE.idleShow) {
+        let c = this.whyCache.get(w);
+        if (!c || this.t - c.t > 0.4) { c = { t: this.t, text: g.workerWhy(w) }; this.whyCache.set(w, c); }
+        why = c.text;
+      }
+      if (!why && !this.showTags && !hl) return;
+      const num = this.showTags || hl ? `<b>${i + 1}</b>` : '';
+      this.labels.set('w' + i, p.x, 2.3, p.z, num + (why ? `<span>${why}</span>` : ''), 'wtag' + (hl ? ' hl' : '') + (why ? ' idle' : ''));
+    });
+    this.hlRing.visible = !!ring;
+    if (ring) { this.hlRing.position.set(ring.x, 0.05, ring.z); this.hlRing.scale.setScalar(1 + Math.sin(this.t * 6) * 0.08); }
   }
 
   syncFlights(dt) {
@@ -1042,23 +1087,26 @@ class View {
   }
 
   syncPads() {
-    const g = this.g, s = g.s, pl = g.pl;
+    const g = this.g, s = g.s;
     for (const p of PADS) {
       const o = this.padObjs[p.id];
       if (!o) continue;
       const paid = (s.padPaid[p.id] || 0) / p.cost;
       o.fill.scale.set(1, Math.max(0.001, paid), 1);
       o.fill.position.z = (p.d - 0.3) * (1 - paid) / 2;
-      if (Math.abs(p.x - pl.x) < 45 && Math.abs(p.z - pl.z) < 40) {
+      if (Math.abs(p.x - this.cx) < 45 && Math.abs(p.z - this.cz) < 40) {
         const rem = p.cost - (s.padPaid[p.id] || 0);
         const ok = s.money >= rem ? ' ok' : '';
-        this.labels.set('pad' + p.id, p.x, p.station ? 3.2 : 2.4, p.z, `<div class="t">${padTitle(p)}</div><div class="c${ok}">${fmtMoney(rem)}</div>`, 'pad' + (p.gate ? ' gate' : ''));
+        // вторая строка — что даст покупка (отзыв: «нужна подсказка, что будет на выходе»)
+        const info = padInfo(p);
+        this.labels.set('pad' + p.id, p.x, p.station ? 3.2 : 2.4, p.z,
+          `<div class="t">${padTitle(p)}</div>${info ? `<div class="i">${info}</div>` : ''}<div class="c${ok}">${fmtMoney(rem)}</div>`, 'pad' + (p.gate ? ' gate' : ''));
       }
     }
   }
 
   pileLabels() {
-    const g = this.g, s = g.s, pl = g.pl;
+    const g = this.g, s = g.s, pl = { x: this.cx, z: this.cz };   // подписи — вокруг камеры
     // стройка: что нужно на этаж
     const site = PILES.site, f = FLOORS[s.floor];
     if (Math.abs(site.x - pl.x) < 50 && Math.abs(site.z - pl.z) < 50) {
@@ -1104,9 +1152,7 @@ class View {
     for (const id of g.stOn) {
       const st = STATIONS[id];
       if (Math.abs(st.x - pl.x) > 12 || Math.abs(st.z - pl.z) > 10) continue;
-      const r = st.recipes[0];
-      const recipe = st.recipes.length > 1 ? 'мебель + коробка → в коробке' : Object.keys(r.in).map((k) => (r.in[k] > 1 ? r.in[k] + ' ' : '') + ITEMS[k].name.toLowerCase()).join(' + ') + ' → ' + Object.keys(r.out).map((k) => (r.out[k] > 1 ? r.out[k] + ' ' : '') + ITEMS[k].name.toLowerCase()).join(' + ');
-      this.labels.set('st' + id, st.x, 2.9, st.z, `<div class="t">${st.name}</div><div class="row">${recipe}</div>`, 'station');
+      this.labels.set('st' + id, st.x, 2.9, st.z, `<div class="t">${st.name}</div><div class="row">${recipeText(st)}</div>`, 'station');
     }
   }
 
