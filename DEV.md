@@ -91,7 +91,7 @@ git push origin main  # → общая версия, только когда в�
 | `src/input.js` / `audio.js` / `admin.js` | управление (WASD + мышь-джойстик) / звуки синтезом / админка теста |
 | `src/main.js` | запуск: модели → сохранение → игровой цикл, автосохранение каждые 10 с, офлайн |
 | `showcase.html` + `src/showcase.js` | витрина моделей |
-| `tools/` | `serve.js`, `balance.js`, `probe.js`, `savetest.js`, `kenney-copy.js`, `formfields.js` |
+| `tools/` | `serve.js`, `balance.js`, `probe.js`, `savetest.js`, `compat.js`, `kenney-copy.js`, `formfields.js` |
 
 Главное в устройстве:
 - **Логика отдельно от графики.** `sim.js` и `bot.js` не знают про Three.js и страницу — их гоняет node.
@@ -150,6 +150,9 @@ git push origin main  # → общая версия, только когда в�
 - Цифры баланса менять можно: хранятся уровни и покупки, а не цены.
 - Новое поле состояния — с умолчанием в `Game.fresh()`.
 - Перед выкладкой — `node tools/savetest.js` (сохранение, загрузка, офлайн) и поднять `LESO_BUILD`.
+- Перед выкладкой в общую — `node tools/compat.js <коммит общей версии> 3`: бот 3 часа играет на той версии,
+  что сейчас у игроков, и проверяет, что новая открывает это сохранение без потерь и играет дальше.
+  Коммит общей: `git rev-parse --short origin/main`.
 
 ## Баланс
 
