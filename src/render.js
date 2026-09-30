@@ -114,6 +114,7 @@ class View {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(LOOK.fog);
     this.scene.fog = new THREE.Fog(LOOK.fog, 85, 175);
+    this.fog0 = [this.scene.fog.near, this.scene.fog.far];   // облёт небоскрёба отодвигает туман и возвращает
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.5, 400);
     this.zoom = 1.15;
     this.labels = new Labels(labelsRoot, this.camera);
@@ -164,6 +165,8 @@ class View {
 
   // показать рабочего: камера летит к нему и держит несколько секунд (или пока игрок не пошёл)
   focusOn(w) { this.focus = { a: w, t: 6 }; this.hl = w; this.hlT = 6; }
+  // показать небоскрёб целиком: камера отъезжает на dur секунд и возвращается
+  towerShot(dur = 3.2) { this.shot = { t: 0, dur }; }
 
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
@@ -817,6 +820,8 @@ class View {
     } else if (e.t === 'hire') {
       const o = this.charFor(e.w);
       this.pop(o.g);
+    } else if (e.t === 'floor') {
+      this.towerShot(3.2);   // этаж достроен — покажем небоскрёб целиком
     } else if (e.t === 'hit') {
       this.shake = 0.45;   // сбила машина — встряхнуть камеру
     }
@@ -829,8 +834,12 @@ class View {
     this.syncStatic();
     for (const id in this.inst) this.ic[id] = 0;
     this.labels.begin();
-    // подробно рисуем вокруг камеры: обычно она у игрока, но «показать рабочего» уводит её к нему
+    // подробно рисуем вокруг камеры: обычно она у игрока, но «показать рабочего» уводит её к нему, облёт — к небоскрёбу
     this.cx = this.camTarget.x; this.cz = this.camTarget.z;
+    if (this.shot && this.shot.t > 0.35 && this.shot.t < this.shot.dur - 0.35) {
+      const tw = PROPS.find((p) => p.id === 'tower');
+      this.cx = tw.x; this.cz = tw.z;
+    }
     const cx = this.cx, cz = this.cz;
     const near = (x, z, r = VIEW_R) => Math.abs(x - cx) < r && Math.abs(z - cz) < r;
     const tmp = {};
@@ -927,6 +936,28 @@ class View {
     const ct = this.camTarget, z = this.zoom;
     this.camera.position.set(ct.x, 19 * z, ct.z + 15 * z);
     this.camera.lookAt(ct.x, 0.6, ct.z + 0.5);
+    // облёт небоскрёба: игровая камера смотрит вниз с ~22 м — выше неё небоскрёб и кран не видны никогда.
+    // Достроен этаж (или кнопка в «Небоскрёбе») — на пару секунд отъезжаем, чтобы он был виден целиком
+    if (this.shot) {
+      const sh = this.shot;
+      sh.t += dt;
+      const k = Math.min(1, sh.t / 0.7, (sh.dur - sh.t) / 0.7), e = k <= 0 ? 0 : k * k * (3 - 2 * k);
+      this.labels.root.classList.toggle('hide', sh.t < sh.dur && e > 0.3);   // подписи у игрока — не поверх небоскрёба
+      if (sh.t >= sh.dur) { this.shot = null; this.scene.fog.near = this.fog0[0]; this.scene.fog.far = this.fog0[1]; }
+      else {
+        // в кадре — весь небоскрёб с краном: верх крана на 12.5 м выше последнего этажа, мачта в 11.5 м сбоку.
+        // Отъезд — по углу обзора камеры: по высоте и по ширине (на телефоне стоймя кадр узкий); камера чуть выше
+        // середины (наклон 0.1), +8 м — ближняя к камере половина небоскрёба
+        const tw = PROPS.find((p) => p.id === 'tower'), T = 0.6 + g.s.floor * 3 + 12.5, cx = tw.x + 2.5;
+        const tv = Math.tan(this.camera.fov * Math.PI / 360), up = Math.tan(Math.atan(tv) - Math.atan(0.1));
+        const D = Math.max((T / 2 + 2.5) / (up + 0.1), 12.5 / (tv * this.camera.aspect)) + 8;
+        this.camera.position.lerp(_pos.set(cx + D * 0.3, T / 2 + D * 0.1, tw.z + D * 0.954), e);
+        this.camera.lookAt(new THREE.Vector3(ct.x, 0.6, ct.z + 0.5).lerp(new THREE.Vector3(cx, T / 2, tw.z), e));
+        // туман отъезжает вместе с камерой, иначе высокий небоскрёб издалека выцветает
+        const push = e * Math.max(0, D - 60);
+        this.scene.fog.near = this.fog0[0] + push; this.scene.fog.far = this.fog0[1] + push;
+      }
+    }
     if (this.shake > 0) {
       this.shake -= dt;
       const a = Math.max(0, this.shake) * 0.6;
@@ -961,7 +992,7 @@ class View {
     if (o.model) {
       // человечек Kenney: анимации «стоит / идёт / бежит» + руки «несу стопку»
       if (!far) {
-        const g = this.g, sp = a.kind === 'player' ? g.plSpeed() : a.kind === 'worker' ? g.uv('u_wSpeed')
+        const g = this.g, sp = a.kind === 'player' ? g.plSpeed() : a.kind === 'worker' ? g.wSpeed()
           : TUNE.custSpeed * (a.state === 'far' || a.state === 'gone' ? 1.3 : 1);   // по тротуару идут бодрее
         o.set(moving, sp, carry, dt);
       }
@@ -1117,7 +1148,7 @@ class View {
     const g = this.g;
     if (!g.open.z2 && !this.plotsShown) return;
     this.plotsShown = true;
-    const grow = g.uv('u_grow');
+    const grow = g.growT();
     let near = -1, nd = 7;   // ближайший к игроку пень — подпишем, что делать
     for (let i = 0; i < PLOTS.length; i++) {
       const o = this.plotObjs[i];

@@ -20,6 +20,12 @@ class Bot {
     // закупка брёвен: как только лесопилка открыта — заказ на весь лесовоз (растёт вместе с «Лесовоз: больше брёвен»)
     const g = this.g;
     if (g.open.z1 && g.s.logOrder < g.logCap()) g.setLogOrder(g.logCap());
+    // жильцы небоскрёба: из двух — тот, кто выше в списке (сначала деньги и скорость производства)
+    const pref = ['lawyers', 'engineers', 'design', 'ads', 'canteen', 'staffing', 'hub', 'forestry', 'logistics', 'fitness', 'insurance'];
+    while (g.s.tenantPending.length) {
+      const p = g.s.tenantPending[0];
+      g.pickTenant(p.floor, p.opts.slice().sort((a, b) => pref.indexOf(a) - pref.indexOf(b))[0]);
+    }
     this.buyUpgrades();
     if (!this.task) { this.task = this.decide(); this.path = null; }
     this.run(dt);
@@ -288,8 +294,18 @@ class Bot {
       case 'pad':
         if (g.s.padDone[t.id] || g.s.money <= 0.5 || t.hold > 6) this.task = null;
         break;
-      case 'pick':
-        if (pl.stack.length >= g.capOf(pl) || t.quiet > 0.3) {
+      case 'pick': {
+        // на стройку далеко: пока доски идут, стоим на выходе станка и забираем их раньше рабочих — как игрок.
+        // Иначе бот хватал 2–3 доски, оставленные продавцом у леса, и нёс их за 65 м: 2-й этаж строился по 30 мин
+        let want = g.capOf(pl), wait = 0.3;
+        if (t.dst === 'site') {
+          const need = g.siteNeed();
+          let left = 0;
+          for (const it in need) if (need[it] > 0 && (g.count(t.id, it) > 0 || pl.stack.includes(it))) left += need[it];
+          want = Math.min(want, Math.max(1, left));
+          if (t.hold < 30) wait = 5;
+        }
+        if (pl.stack.length >= want || t.quiet > wait) {
           if (!pl.stack.length) { this.task = null; break; }
           const d = g.pileSet.has(t.dst) && pl.stack.some((it) => g.space(t.dst, it) > 0) ? t.dst : this.bestDrop();
           if (!d) { this.task = null; break; }
@@ -297,6 +313,7 @@ class Bot {
           this.path = null;
         }
         break;
+      }
       case 'drop':
         if (t.id === 'site') this.lastSite = g.s.playT;   // отнёс на стройку — следующую партию снова продаёт
         if (t.quiet > 0.3 || !pl.stack.length) this.task = null;

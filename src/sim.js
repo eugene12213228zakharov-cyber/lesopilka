@@ -124,6 +124,8 @@ class Game {
       ship: null,
       tips: {},   // какие одноразовые подсказки уже показаны (о пне после первой рубки)
       belt: [],   // что едет по конвейеру в порт: { it, d } — d, сколько метров проехало; первое — ближе к концу
+      tenants: {},          // жильцы: этаж → id из TENANTS
+      tenantPending: [],    // построенные этажи, где жилец ещё не выбран: { floor, opts: [id, id] }
       sitePriority: true,
       tut: 0,
       stats: { made: {}, floorsT: [], zonesT: {}, sold: 0, ships: 0, buys: 0, hitMe: 0, hitW: 0, planted: 0, logs: 0 },
@@ -141,11 +143,16 @@ class Game {
       pl = save.player; ws = save.workers || [];
     }
     this.s = s;
+    this.tenantCalc();
     this.pl = this.agent('player', pl ? pl.x : -62, pl ? pl.z : 24);   // новая игра — у леса: деревья и пилорама в кадре
     if (pl && Array.isArray(pl.stack)) this.pl.stack = pl.stack.filter((i) => ITEMS[i]);
     this.workers = [];
     for (const r of ws) if (PAD_BY_ID[r.pad] && PAD_BY_ID[r.pad].worker) this.spawnWorker(PAD_BY_ID[r.pad], r);
     this.rebuild();
+    // жильцы появились в обновлении: на этажи, построенные раньше, тоже предлагаем выбрать — по очереди
+    for (const fl of TENANT_FLOORS) {
+      if (fl <= s.floor && !s.tenants[fl] && !s.tenantPending.some((p) => p.floor === fl)) this.tenantOffer(fl);
+    }
   }
 
   toSave() {
@@ -180,17 +187,49 @@ class Game {
   rnd() { return rngNext(this.s.rng); }
   uv(id) { const u = UPG_BY_ID[id]; return u.v(this.s.upg[id] || 0); }
   floorBonus() { return Math.pow(FLOOR_BONUS, this.s.floor); }
-  capOf(a) { return a.kind === 'player' ? this.uv('u_cap') : this.uv('u_wCap'); }
+  // вместимость рук: рабочим — с «тележками» порта и кадровым агентством (жилец)
+  capOf(a) { return a.kind === 'player' ? this.uv('u_cap') : this.uv('u_wCap') + this.uv('u_wCap2') + this.teff.wCap; }
+  // скорость рабочих: с «электрокарами» порта и столовой (жилец)
+  wSpeed() { return this.uv('u_wSpeed') * this.uv('u_wSpeed2') * (1 + this.teff.wSpeed); }
+  growT() { return this.uv('u_grow') / (1 + this.teff.grow); }
 
   price(it) {
-    const d = ITEMS[it], base = d.base || it, fb = this.floorBonus();
+    const d = ITEMS[it], base = d.base || it, fb = this.floorBonus() * (1 + this.teff.price);
     if (it === 'board') return d.price * this.uv('u_bPrice') * fb;
     if (base === 'chair' || base === 'table' || base === 'wardrobe') {
-      let p = ITEMS[base].price * this.uv('u_fPrice') * fb;
+      let p = ITEMS[base].price * this.uv('u_fPrice') * fb * (1 + this.teff.furn);
       if (d.base) p *= this.uv('u_boxMul');
       return p;
     }
     return d.price * fb;
+  }
+
+  // ───────── жильцы небоскрёба ─────────
+  // Бонусы всех въехавших жильцов, сложенные по видам (this.teff), — пересчитываются при въезде и загрузке
+  tenantCalc() {
+    const t = { wSpeed: 0, cust: 0, machines: 0, store: 0, price: 0, furn: 0, grow: 0, run: 0, wCap: 0, ship: 0, insured: 0 };
+    for (const fl in this.s.tenants) { const T = TENANTS[this.s.tenants[fl]]; if (T) for (const k in T.eff) t[k] += T.eff[k]; }
+    this.teff = t;
+  }
+  // этаж построен и он для жильца — предложить двух на выбор: разных, только тех, чей бонус уже действует
+  // (TENANTS[].avail), «страховую» — если её ещё нет
+  tenantOffer(floor) {
+    const taken = new Set(Object.values(this.s.tenants));
+    const pool = Object.keys(TENANTS).filter((id) => !(TENANTS[id].once && taken.has(id)) && (!TENANTS[id].avail || TENANTS[id].avail(this)));
+    const a = pool[Math.floor(this.rnd() * pool.length)];
+    const rest = pool.filter((id) => id !== a);
+    const b = rest[Math.floor(this.rnd() * rest.length)];
+    this.s.tenantPending.push({ floor, opts: [a, b] });
+    this.ev({ t: 'tenantOffer', floor });
+  }
+  pickTenant(floor, id) {
+    const i = this.s.tenantPending.findIndex((p) => p.floor === floor && p.opts.indexOf(id) >= 0);
+    if (i < 0) return false;
+    this.s.tenantPending.splice(i, 1);
+    this.s.tenants[floor] = id;
+    this.tenantCalc();
+    this.ev({ t: 'tenant', floor, id });
+    return true;
   }
 
   // ───────── что открыто ─────────
@@ -298,7 +337,7 @@ class Game {
     if (!b) return 0;
     if (id === 'yard') return this.uv('u_yard');
     if (p.shelf) return this.uv('u_shelf');
-    if (p.role === 'out') return Math.round(b * this.uv('u_store'));
+    if (p.role === 'out') return Math.round(b * this.uv('u_store') * (1 + this.teff.store));
     return b;
   }
   space(id, it) {
@@ -397,7 +436,7 @@ class Game {
     this.moveCollide(pl, vx * sp * dt, vz * sp * dt);
   }
   // с пустыми руками бежит быстрее (отзыв игрока: «добавить бег, когда руки пустые»)
-  plSpeed() { return this.uv('u_speed') * (this.pl.stack.length ? 1 : TUNE.emptyRun); }
+  plSpeed() { return this.uv('u_speed') * (this.pl.stack.length ? 1 : TUNE.emptyRun) * (1 + this.teff.run); }
 
   moveCollide(a, dx, dz) {
     const r = TUNE.playerR, n = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 0.25));
@@ -577,7 +616,7 @@ class Game {
       return;
     }
     if (w.task === 'off') w.task = null;
-    const sp = this.uv('u_wSpeed');
+    const sp = this.wSpeed();
     switch (w.role) {
       case 'route': this.routeW(w, dt, sp); break;
       case 'builder': this.builderW(w, dt, sp); break;
@@ -1153,6 +1192,7 @@ class Game {
 
   // машина сбила человека: отлетает вбок, лежит stun секунд, всё из рук разлетается по земле; сколько рассыпалось
   knock(tr, a, stun) {
+    const keep = a === this.pl && this.teff.insured > 0;   // страховая (жилец): груз не разлетается
     const rx = a.x - tr.x, rz = a.z - tr.z, f = rx * tr.dx + rz * tr.dz, side = -rx * tr.dz + rz * tr.dx >= 0 ? 1 : -1;
     const x0 = a.x, z0 = a.z, nx = -tr.dz * side, nz = tr.dx * side;
     a.x = tr.x + tr.dx * (f + 1.2) + nx * (TRUCK_HALF[1] + 1.9);
@@ -1161,14 +1201,14 @@ class Game {
     a.stun = stun; a.stun0 = stun;
     a.face = Math.atan2(nx, nz);
     a.moving = false;
-    const n = a.stack.length;
+    const n = keep ? 0 : a.stack.length;
     for (let i = 0; i < n; i++) {
       const ang = rngNext(this.lrs) * Math.PI * 2, d = 1.2 + rngNext(this.lrs) * 2.4;
       let x = a.x + Math.cos(ang) * d + nx * 0.5, z = a.z + Math.sin(ang) * d + nz * 0.5;
       if (this.hits(x, z, 0.2)) { x = a.x + (rngNext(this.lrs) - 0.5) * 0.6; z = a.z + (rngNext(this.lrs) - 0.5) * 0.6; }
       this.loose.push({ it: a.stack[i], x, z, x0, z0, y0: 1.1 + i * 0.09, t: -i * 0.012, ry: rngNext(this.lrs) * Math.PI * 2 });
     }
-    a.stack = [];
+    if (!keep) a.stack = [];
     return n;
   }
   hitPlayer(tr) {
@@ -1250,7 +1290,7 @@ class Game {
       for (const c of this.cust) if (c.kind === 'c1' && c.stall === si) { if (c.state === 'far') far++; else if (c.state !== 'gone') n++; }
       const counters = Math.max(1, S.counters.filter((id) => this.pileSet.has(id)).length), max = TUNE.c1Max * counters;
       if (st.timer <= 0 && n < max && n + far < max + 4) {
-        st.timer = this.uv('u_cust1') * (0.75 + 0.5 * this.rnd()) / counters;
+        st.timer = this.uv('u_cust1') * (0.75 + 0.5 * this.rnd()) / counters / (1 + this.teff.cust);
         const jit = (this.rnd() - 0.5) * 0.8, [x, z] = this.c1From(S, jit);
         const c = this.agent('c1', x, z);
         c.stall = si; c.want = 1 + Math.floor(this.rnd() * c1Take(this.s.upg.u_cust1 || 0)); c.spot = -1; c.look = Math.floor(this.rnd() * 1000);
@@ -1378,7 +1418,7 @@ class Game {
     let n = 0, far = 0;
     for (const c of this.cust) if (c.kind === 'c4') { if (c.state === 'far') far++; else if (c.state !== 'gone') n++; }
     if (this.c4Timer <= 0 && n < TUNE.c4Max && n + far < TUNE.c4Max + 4) {
-      this.c4Timer = this.uv('u_cust4') * (0.75 + 0.5 * this.rnd());
+      this.c4Timer = this.uv('u_cust4') * (0.75 + 0.5 * this.rnd()) / (1 + this.teff.cust);
       const e = this.rnd() < 0.5 ? 0 : 1, en = C4_ENTRY[e];
       const c = this.agent('c4', en[0], en[1]);
       c.want = 1 + Math.floor(this.rnd() * 3); c.tries = 0; c.look = Math.floor(this.rnd() * 1000);
@@ -1495,7 +1535,7 @@ class Game {
 
   // ───────── делянка ─────────
   treesStep(dt) {
-    const g = this.uv('u_grow');
+    const g = this.growT();
     for (let i = 0; i < PLOTS.length; i++) {
       const tr = this.s.trees[i];
       if (tr.stage === 1 && this.plotOn(i)) { tr.t += dt; if (tr.t >= g) { tr.stage = 2; tr.t = 0; } }
@@ -1506,7 +1546,7 @@ class Game {
   stationStep(id, dt) {
     const st = STATIONS[id];
     const ss = this.s.st[id] || (this.s.st[id] = { cur: -1, prog: 0, rr: 0 });
-    const mul = st.speed ? this.uv(st.speed) : 1;
+    const mul = (st.speed ? this.uv(st.speed) : 1) / (1 + this.teff.machines);
     let time = dt, guard = 30;
     while (time > 0 && guard-- > 0) {
       if (ss.cur < 0) {
@@ -1638,7 +1678,7 @@ class Game {
       if (sh.t <= 0) { this.newContract(); sh.state = 'in'; sh.t = TUNE.shipSail; this.ev({ t: 'ship', st: 'in' }); }
     } else if (sh.state === 'in') {
       sh.t -= dt;
-      if (sh.t <= 0) { sh.state = 'docked'; sh.left = this.uv('u_shipT'); this.ev({ t: 'ship', st: 'docked' }); }
+      if (sh.t <= 0) { sh.state = 'docked'; sh.left = this.uv('u_shipT') + this.teff.ship; this.ev({ t: 'ship', st: 'docked' }); }
     } else if (sh.state === 'docked') {
       sh.left -= dt;
       if (this.s.padDone.p_crane) {
@@ -1683,6 +1723,7 @@ class Game {
     this.s.floor++;
     this.s.floorGot = {};
     this.s.stats.floorsT.push(Math.round(this.s.playT));
+    if (TENANT_FLOORS.indexOf(this.s.floor) >= 0) this.tenantOffer(this.s.floor);
     const z = f.unlock ? ZONE_BY_ID[f.unlock] : null;
     this.rebuild();
     this.ev({ t: 'floor', n: this.s.floor, zone: z ? z.id : null });

@@ -56,6 +56,12 @@ class UI {
     } else if (e.t === 'fell' && e.by === 'player' && !g.s.tips.fell) {   // первое срубленное дерево — объясняем про пень
       g.s.tips.fell = true;
       this.toast('🌲 На месте дерева остался пень — встань на него, и посадишь новое', 'big');
+    } else if (e.t === 'tenantOffer') {   // окно «кто въедет?» — после облёта небоскрёба (3.2 с), не поверх него
+      this.tenantAsked = false; this.tenantAt = performance.now() + 3300;
+    } else if (e.t === 'tenant') {
+      const T = TENANTS[e.id];
+      this.toast(`${T.icon} На ${e.floor}-й этаж въехал жилец «${T.name}»: ${T.text}`, 'big');
+      if (this.panel === 'tower') this.render();
     } else if (e.t === 'nologs') {
       const now = performance.now();   // не чаще раза в 20 с
       if (now - (this.noLogT || 0) > 20000) { this.noLogT = now; this.toast('🚚 Не хватило денег на брёвна — лесовоз уехал', 'bad'); }
@@ -105,7 +111,11 @@ class UI {
       const span = Math.max(10, b[0] - a[0]);
       $('rate').textContent = '+' + fmtMoney(((b[1] - a[1]) / span) * 60) + '/мин';
       const fb = g.floorBonus();
-      $('floorV').innerHTML = `Этаж <b>${s.floor}</b>/${FLOORS.length}` + (s.floor ? ` · цены ×${fb.toFixed(2)}` : '');
+      const pend = s.tenantPending.length;   // жилец не выбран — напоминаем на чипе этажа (клик — «Небоскрёб»)
+      $('floorV').innerHTML = `Этаж <b>${s.floor}</b>/${FLOORS.length}` + (pend ? ' · 🏠 выбери жильца' : s.floor ? ` · цены ×${fb.toFixed(2)}` : '');
+      $('floorChip').classList.toggle('hot', pend > 0);
+      // этаж достроен или вернулся с невыбранным жильцом — окно выбора, когда другие окна закрыты
+      if (pend && !this.tenantAsked && $('modal').classList.contains('hidden') && performance.now() > (this.tenantAt || 0)) this.tenantModal();
       const inCash = g.moneyInCash();
       $('cashHint').textContent = inCash >= 1 ? 'в кассах ещё ' + fmtMoney(inCash) : '';
       // сколько улучшений по карману — значок на кнопке
@@ -184,8 +194,12 @@ class UI {
       }
     } else if (this.panel === 'tower') {
       const f = FLOORS[s.floor];
+      // жильцы, которых ещё не выбрали (этаж достроили, пока окно было закрыто или игрока не было)
+      for (const p of s.tenantPending) h += `<div class="sec">Этаж ${p.floor}: кто въедет?</div>` + this.tenantCards(p);
+      h += '<button class="wide" data-act="towerShot">🔭 Посмотреть на небоскрёб</button>';
       h += `<div class="note">Каждый этаж — заказ на товары. Отнеси их на стройку у подножия небоскрёба (или найми строителей). ` +
-        `За каждый этаж все цены продажи растут ×${FLOOR_BONUS}; сейчас <b>×${g.floorBonus().toFixed(2)}</b>.</div>`;
+        `За каждый этаж все цены продажи растут ×${FLOOR_BONUS}; сейчас <b>×${g.floorBonus().toFixed(2)}</b>. ` +
+        `На этажи без новой зоны въезжают жильцы — каждый даёт свой бонус.</div>`;
       if (f) {
         h += `<div class="sec">Сейчас строится ${s.floor + 1}-й этаж</div>`;
         for (const it in f.need) {
@@ -198,7 +212,10 @@ class UI {
       FLOORS.forEach((fl, i) => {
         const z = fl.unlock ? ZONE_BY_ID[fl.unlock].name : '';
         const st = i < s.floor ? 'done' : i === s.floor ? 'cur' : '';
-        h += `<div class="fl ${st}"><b>${i + 1}</b>${z ? `<span>→ ${z}</span>` : ''}</div>`;
+        const T = TENANTS[s.tenants[i + 1]];   // этаж i+1: въехавший жилец
+        const what = z ? `<span>→ ${z}</span>` : T ? `<span title="${T.name}: ${T.text}">${T.icon} ${T.name}</span>`
+          : TENANT_FLOORS.indexOf(i + 1) >= 0 ? '<span>🏠 жилец</span>' : '';
+        h += `<div class="fl ${st}"><b>${i + 1}</b>${what}</div>`;
       });
       h += '</div>';
     } else if (this.panel === 'work') {
@@ -292,6 +309,8 @@ class UI {
     if (t.dataset.upg) { if (g.buyUpgrade(t.dataset.upg)) this.audio.play('upg'); this.refresh(); }
     else if (t.dataset.w !== undefined) { const w = g.workers[+t.dataset.w]; w.on = !w.on; this.refresh(); }
     else if (t.dataset.show !== undefined) { if (this.view) this.view.focusOn(g.workers[+t.dataset.show]); }
+    else if (t.dataset.tenant) { const [fl, id] = t.dataset.tenant.split(':'); if (g.pickTenant(+fl, id)) this.audio.play('upg'); }
+    else if (t.dataset.act === 'towerShot') { this.close(); if (this.view) this.view.towerShot(4.5); }
     else if (t.dataset.order !== undefined) {   // закупка брёвен: следующий шаг вверх или вниз, не больше, чем берёт лесовоз
       const cur = g.s.logOrder || 0, up = +t.dataset.order > 0, cap = g.logCap();
       const steps = LOG_ORDER_STEPS.filter((v) => v <= cap);
@@ -319,6 +338,31 @@ class UI {
       `<p class="big">+${fmtMoney(r.money)}</p><p class="small">Деньги лежат в кассах — собери их${this.g.workers.some((w) => w.role === 'collector') ? ' (или дождись инкассатора)' : ''}.</p>` +
       (r.floors > 0 ? `<p>🏢 Строители достроили этажей: <b>${r.floors}</b></p>` : '') +
       (made ? `<p class="small">${made}</p>` : '') + '<button data-close>Отлично</button>');
+  }
+
+  // ───────── жильцы небоскрёба ─────────
+  // две карточки на выбор; data-tenant="этаж:id" — клик выбирает
+  tenantCards(p) {
+    return '<div class="tenants">' + p.opts.map((id) => {
+      const T = TENANTS[id];
+      return `<button class="tenant" data-tenant="${p.floor}:${id}"><span class="ti">${T.icon}</span><b>${T.name}</b><span>${T.text}</span></button>`;
+    }).join('') + '</div>';
+  }
+
+  // этаж достроен — кто въедет? Окно можно закрыть: выбор подождёт в «Небоскрёбе» (чип этажа напомнит)
+  tenantModal() {
+    const p = this.g.s.tenantPending[0];
+    if (!p) return;
+    this.tenantAsked = true;
+    this.modal(`<h2>🏢 ${p.floor}-й этаж построен!</h2><p>Кто въедет? Бонусы жильцов складываются.</p>` +
+      this.tenantCards(p) + '<p class="small">Можно выбрать и позже — в «Небоскрёбе».</p><button data-close class="ghost">Позже</button>');
+    $('modalBox').querySelectorAll('[data-tenant]').forEach((b) => {
+      b.onclick = () => {   // выбрал — следующий невыбранный этаж, если есть (после обновления их может быть несколько)
+        const [fl, id] = b.dataset.tenant.split(':');
+        this.g.pickTenant(+fl, id); this.audio.play('upg');
+        if (this.g.s.tenantPending.length) this.tenantModal(); else this.hideModal();
+      };
+    });
   }
 
   // сохранение прошлой версии игра не принимает (другое начало) — объясняем, а не молча начинаем заново
