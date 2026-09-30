@@ -93,7 +93,7 @@ class Game {
     this.cust = [];
     this.queue = [];
     this.trucks = [];
-    this.spots = [null, null, null];
+    this.spots = C1_SPOTS.map(() => null);   // кто стоит на месте у прилавка
     this.treeRes = [];
     this.logTimer = 2;
     this.optTimer = 8;
@@ -297,7 +297,6 @@ class Game {
     const b = p.accepts[it] || 0;
     if (!b) return 0;
     if (id === 'yard') return this.uv('u_yard');
-    if (id === 'counter') return this.uv('u_counter');
     if (p.shelf) return this.uv('u_shelf');
     if (p.role === 'out') return Math.round(b * this.uv('u_store'));
     return b;
@@ -1208,15 +1207,17 @@ class Game {
     if (this.walkTo(c, w[0], w[1], dt, TUNE.custSpeed * 1.3)) c.wp.shift();
   }
 
-  // ───────── покупатели досок (прилавок) ─────────
-  // Лимит c1Max — как раньше, по тем, кто на лесопилке; идущие по тротуару в него не входят
+  // ───────── покупатели досок (прилавки) ─────────
+  // Лимит c1Max — на каждый прилавок, по тем, кто на лесопилке; идущие по тротуару в него не входят
   c1Step(dt) {
     if (!this.open.z1) return;
     this.c1Timer -= dt;
     let n = 0, far = 0;
     for (const c of this.cust) if (c.kind === 'c1') { if (c.state === 'far') far++; else if (c.state !== 'gone') n++; }
-    if (this.c1Timer <= 0 && n < TUNE.c1Max && n + far < TUNE.c1Max + 4) {
-      this.c1Timer = this.uv('u_cust1') * (0.75 + 0.5 * this.rnd());
+    // каждый прилавок приводит своих покупателей: второй прилавок — вторая очередь, почти ×2 к продажам досок
+    const counters = Math.max(1, COUNTERS.filter((id) => this.pileSet.has(id)).length), max = TUNE.c1Max * counters;
+    if (this.c1Timer <= 0 && n < max && n + far < max + 4) {
+      this.c1Timer = this.uv('u_cust1') * (0.75 + 0.5 * this.rnd()) / counters;
       const x = C1_ENTRY[0] + (this.rnd() - 0.5) * 0.8;
       const c = this.agent('c1', x, this.farZ(x, C1_ENTRY[1]));
       c.want = 1 + Math.floor(this.rnd() * 3); c.spot = -1; c.look = Math.floor(this.rnd() * 1000);
@@ -1227,18 +1228,30 @@ class Game {
     this.c1q = this.c1q.filter((c) => c.state === 'far' && !c.dead);
     this.c1q.forEach((c, i) => {
       const at = this.walkTo(c, c.x, C1_ENTRY[1] + i * 1.3, dt, TUNE.custSpeed * 1.3);
-      if (i === 0 && at && n < TUNE.c1Max) { c.state = 'in'; n++; }
+      if (i === 0 && at && n < max) { c.state = 'in'; n++; }
       else if (at) c.face = Math.PI;
     });
     for (const c of this.cust) if (c.kind === 'c1') this.c1Update(c, dt);
     this.cust = this.cust.filter((c) => !c.dead);
   }
 
+  // свободное место у прилавка: сперва где досок хватит на всю покупку, потом где есть хоть сколько, потом любое
+  c1Spot(c) {
+    let best = -1, bs = -1;
+    for (let i = 0; i < C1_SPOTS.length; i++) {
+      const pile = C1_SPOTS[i][2];
+      if (this.spots[i] || !this.pileSet.has(pile)) continue;
+      const have = this.count(pile, 'board'), sc = have >= c.want ? 2 : have > 0 ? 1 : 0;
+      if (sc > bs) { bs = sc; best = i; }
+    }
+    return best;
+  }
+
   c1Update(c, dt) {
     const sp = TUNE.custSpeed;
     switch (c.state) {
       case 'in': {
-        const k = this.spots.indexOf(null);
+        const k = this.c1Spot(c);
         if (k >= 0) { c.spot = k; this.spots[k] = c; c.state = 'walk'; this.goTo(c, C1_SPOTS[k][0], C1_SPOTS[k][1]); }
         else if (!c.waitPos) { c.waitPos = true; this.goTo(c, -6 + (this.rnd() - 0.5) * 3, 21 + (this.rnd() - 0.5) * 3); }
         else this.follow(c, dt, sp);
@@ -1247,18 +1260,20 @@ class Game {
       case 'walk':
         if (this.follow(c, dt, sp)) { c.state = 'buy'; c.xacc = 0; c.wait = 0; c.face = -Math.PI / 2; }
         break;
-      case 'buy':
+      case 'buy': {
+        const pile = C1_SPOTS[c.spot][2];
         c.xacc += dt;
         while (c.xacc >= 0.3) {
           c.xacc -= 0.3;
-          if (c.stack.length < c.want && this.count('counter', 'board') > 0) {
-            this.take('counter', 'board'); c.stack.push('board'); c.wait = 0;
-            this.ev({ t: 'x', it: 'board', from: { p: 'counter' }, to: { a: c } });
+          if (c.stack.length < c.want && this.count(pile, 'board') > 0) {
+            this.take(pile, 'board'); c.stack.push('board'); c.wait = 0;
+            this.ev({ t: 'x', it: 'board', from: { p: pile }, to: { a: c } });
           } else break;
         }
         if (c.stack.length >= c.want) this.c1Leave(c, true);
         else { c.wait += dt; if (c.wait > 30) this.c1Leave(c, c.stack.length > 0); }
         break;
+      }
       case 'out':   // дошёл до тротуара — дальше уходит по нему на юг
         if (this.follow(c, dt, sp)) { c.state = 'gone'; c.wp = [[c.x, ROAD.southZ - 10]]; }
         break;
@@ -1270,9 +1285,9 @@ class Game {
 
   c1Leave(c, pay) {
     if (pay) {
-      const v = c.stack.length * this.price('board');
-      this.addCash('cash1', v, c.x, c.z);
-      this.ev({ t: 'm', v, from: { a: c }, to: { p: 'cash1' } });
+      const v = c.stack.length * this.price('board'), cash = c.spot >= 0 ? C1_SPOTS[c.spot][3] : 'cash1';
+      this.addCash(cash, v, c.x, c.z);
+      this.ev({ t: 'm', v, from: { a: c }, to: { p: cash } });
     }
     if (c.spot >= 0) this.spots[c.spot] = null;
     c.spot = -1; c.state = 'out';

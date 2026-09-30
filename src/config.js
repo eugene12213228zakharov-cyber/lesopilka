@@ -69,7 +69,17 @@ machine('saw3', 'z1', 'saw', 'Пилорама №3', -28, 30, SAW, { speed: 'u_
 addPile('counter', { zone: 'z1', x: -15.2, z: 16, w: 2.4, d: 4, mode: 'drop', accepts: { board: 40 }, name: 'Прилавок', sell: true });
 addPile('cash1', { zone: 'z1', x: -15.2, z: 21.4, w: 2.4, d: 2, money: true, name: 'касса прилавка' });
 PROPS.push({ id: 'stall', type: 'stall', zone: 'z1', x: -12, z: 16, w: 1.6, d: 6 });
-const C1_SPOTS = [[-10.1, 14], [-10.1, 16], [-10.1, 18]];
+// второй прилавок — южнее первого: покупатели заходят как раз между ними. Места у прилавка — узкое место продаж досок
+// (у одного прилавка 3 места заняты почти всегда, остальные покупатели ждут), вместимость — нет
+addPile('counter2', { zone: 'z1', x: -15.2, z: 27, w: 2.4, d: 4, mode: 'drop', pad: 'p_counter2', accepts: { board: 40 }, name: 'Прилавок №2', sell: true });
+addPile('cash1b', { zone: 'z1', x: -15.2, z: 32.4, w: 2.4, d: 2, money: true, pad: 'p_counter2', name: 'касса прилавка №2' });
+PROPS.push({ id: 'stall2', type: 'stall', zone: 'z1', pad: 'p_counter2', x: -12, z: 27, w: 1.6, d: 6 });
+// места покупателей: x, z, у какого прилавка, в какую кассу
+const C1_SPOTS = [
+  [-10.1, 14, 'counter', 'cash1'], [-10.1, 16, 'counter', 'cash1'], [-10.1, 18, 'counter', 'cash1'],
+  [-10.1, 25, 'counter2', 'cash1b'], [-10.1, 27, 'counter2', 'cash1b'], [-10.1, 29, 'counter2', 'cash1b'],
+];
+const COUNTERS = ['counter', 'counter2'];
 // покупатели досок приходят по тротуару вдоль южной дороги: здесь входят на лесопилку и отсюда уходят
 const C1_ENTRY = [-4, 30];
 const C1_EXIT = [-4, 34];
@@ -202,7 +212,7 @@ const PACKED_OUT = ['packer_out', 'packer2_out'];
 const ROUTES = {
   logs:     { name: 'Грузчик брёвен', from: ['yard', 'flogs'], to: ['saw1_in', 'saw2_in', 'saw3_in'], hint: 'брёвна со склада → пилорамы' },
   // excess — забирать только излишки: когда выход станка заполнен больше чем на эту долю
-  boards:   { name: 'Продавец досок', from: SAWS_OUT, to: ['counter'], excess: 0.5, hint: 'лишние доски с пилорам → прилавок' },
+  boards:   { name: 'Продавец досок', from: SAWS_OUT, to: COUNTERS, excess: 0.5, hint: 'лишние доски с пилорам → прилавки' },
   tractor:  { name: 'Тракторист', from: ['flogs'], to: SAWS_IN, hint: 'брёвна с делянки → пилорамы' },
   jlogs:    { name: 'Грузчик брёвен', from: ['yard', 'flogs'], to: ['beamer1_in', 'beamer2_in'], hint: 'брёвна → брусовальные станки' },
   jboards:  { name: 'Грузчик досок', from: SAWS_OUT, to: ['press1_in', 'press2_in', 'benchC_in'], hint: 'доски с пилорам → прессы и верстак стульев' },
@@ -239,10 +249,11 @@ const PADS = [
   // z1
   { id: 'p_wlog1',  zone: 'z1', x: -40, z: 19,  cost: 120,    worker: { route: 'logs' } },
   { id: 'p_saw2',   zone: 'z1', station: 'saw2', cost: 280 },
-  { id: 'p_wbrd1',  zone: 'z1', x: -17, z: 29,  cost: 450,    worker: { route: 'boards' }, req: ['p_wlog1'] },
+  { id: 'p_wbrd1',  zone: 'z1', x: -20, z: 29,  cost: 450,    worker: { route: 'boards' }, req: ['p_wlog1'] },
   { id: 'p_saw3',   zone: 'z1', station: 'saw3', cost: 1400,  req: ['p_saw2'] },
   { id: 'p_wlog2',  zone: 'z1', x: -40, z: 25,  cost: 2400,   worker: { route: 'logs' }, req: ['p_saw3', 'p_wlog1'] },
-  { id: 'p_wbrd2',  zone: 'z1', x: -17, z: 34,  cost: 3600,   worker: { route: 'boards' }, req: ['p_saw3', 'p_wbrd1'] },
+  { id: 'p_counter2', zone: 'z1', x: -15.2, z: 29.2, w: 2.4, d: 8.4, cost: 4000, feature: 'counter2', req: ['p_wbrd1'] },
+  { id: 'p_wbrd2',  zone: 'z1', x: -20, z: 34,  cost: 3600,   worker: { route: 'boards' }, req: ['p_saw3', 'p_wbrd1'] },
   // центр
   { id: 'p_build1', zone: 'c', x: -9, z: -12,   cost: 9000,   worker: { role: 'builder' }, req: ['z3'] },
   { id: 'p_build2', zone: 'c', x: 9,  z: -12,   cost: 60000,  worker: { role: 'builder' }, req: ['p_build1', 'z4'] },
@@ -275,7 +286,7 @@ const PADS = [
   { id: 'p_beamer2', zone: 'z3', station: 'beamer2', cost: 30000, req: ['p_wj_jlogs'] },
   { id: 'p_wj_jlogs2',   zone: 'z1', x: -40, z: 31, cost: 120000, worker: { route: 'jlogs' }, req: ['z5', 'p_wj_jlogs'] },
   { id: 'p_wj_jlogs3',   zone: 'z1', x: -40, z: 36, cost: 2e6,    worker: { route: 'jlogs' }, req: ['z6', 'p_wj_jlogs2'] },
-  { id: 'p_wj_jboards3', zone: 'z1', x: -17, z: 24, cost: 2.5e6,  worker: { route: 'jboards' }, req: ['z6', 'p_wj_jboards2'] },
+  { id: 'p_wj_jboards3', zone: 'z1', x: -20, z: 24, cost: 2.5e6,  worker: { route: 'jboards' }, req: ['z6', 'p_wj_jboards2'] },
   { id: 'p_wj_jboards2', zone: 'z3', x: 47.8, z: 12.5, cost: 150000, worker: { route: 'jboards' }, req: ['z5', 'p_wj_jboards'] },
   { id: 'p_wj_jbeams2',  zone: 'z3', x: 47.8, z: 22.5, cost: 170000, worker: { route: 'jbeams' }, req: ['z5', 'p_wj_jbeams'] },
   { id: 'p_wj_jlegs2',   zone: 'z3', x: 47.8, z: 26.5, cost: 190000, worker: { route: 'jlegs' }, req: ['z5', 'p_wj_jlegs'] },
@@ -334,7 +345,7 @@ function padTitle(p) {
   if (p.gate) return 'Участок: ' + ZONE_BY_ID[p.gate].name;
   return {
     opt: 'Оптовый склад', shelf: 'Витрина', pneumo: 'Пневмопровод для опилок',
-    dock: 'Причал', crane: 'Кран и склад порта',
+    dock: 'Причал', crane: 'Кран и склад порта', counter2: 'Прилавок №2',
   }[p.feature] || p.id;
 }
 
@@ -354,6 +365,7 @@ function padInfo(p) {
   if (p.gate) return ZONE_BY_ID[p.gate].opens || '';
   if (p.feature === 'shelf') return 'сюда кладёшь ' + SHELF_WHAT[Object.keys(SHELF_PAD).find((k) => SHELF_PAD[k] === p.id)] + ' — покупатели разбирают';
   return {
+    counter2: 'ещё 3 места для покупателей досок и своя касса',
     opt: 'оптовик увозит мебель за 70% цены', pneumo: 'опилки сами летят в бункер картона',
     dock: 'корабли с заказами платят втрое', crane: 'кран сам грузит корабль со склада порта',
   }[p.feature] || '';
@@ -390,8 +402,6 @@ const UPGRADES = [
   { id: 'u_trFreq', zone: 'z1', name: 'Лесовозы: чаще',       max: 8,  cost: geo(70, 1.7),    v: (l) => 15 * Math.pow(0.86, l), fmt: (v) => 'раз в ' + v.toFixed(1) + ' с' },
   { id: 'u_trLoad', zone: 'z1', name: 'Лесовозы: больше брёвен', max: 8, cost: geo(90, 1.7), v: (l) => 6 + 2 * l, fmt: (v) => v + ' шт.' },
   { id: 'u_yard',   zone: 'z1', name: 'Склад брёвен: больше', max: 5,  cost: geo(150, 1.9),   v: (l) => 30 + 15 * l, fmt: (v) => v + ' шт.' },
-  // прилавок: больше досок за раз — вывалил стопку и ушёл (продажи это не ускоряет: у прилавка 3 места для покупателей)
-  { id: 'u_counter', zone: 'z1', name: 'Прилавок: больше',   max: 5,  cost: geo(200, 1.9),   v: (l) => 40 + 20 * l, fmt: (v) => v + ' шт.' },
   // выходы всех станков: пилы дольше работают, пока доски не разобрали, — и дольше дают опилки
   { id: 'u_store',  zone: 'z1', name: 'Склады у станков: больше', max: 4, cost: geo(4000, 3), v: (l) => 1 + 0.5 * l, fmt: (v) => '×' + v.toFixed(1) + ' к выходу' },
   { id: 'u_bPrice', zone: 'z1', name: 'Доски: цена',          max: 8,  cost: geo(120, 1.85),  v: (l) => Math.pow(1.2, l), fmt: (v) => '×' + v.toFixed(1) },
