@@ -53,10 +53,12 @@ class UI {
       this.toast('🎉 Новая зона: <b>' + ZONE_BY_ID[e.id].name + '</b>', 'big');
       if (e.id === 'z1') this.toast('🚚 Брёвна на лесопилку везёт лесовоз — за деньги. Сколько за рейс — «Улучшения» → «Закупка брёвен»');
       if (this.panel) this.render();
-    } else if (e.t === 'casino') {   // встал на ковёр у двери небоскрёба
-      if ($('modal').classList.contains('hidden')) this.casinoModal();
-    } else if (e.t === 'casinoPaid') {
-      this.casinoRefresh();
+    } else if (e.t === 'room') {   // вошёл в зал казино или вышел
+      this.roomEvent(e);
+    } else if (e.t === 'spot') {   // подошёл к игре в зале (или отошёл)
+      this.casinoDock(e.id);
+    } else if (e.t === 'casinoPaid') {   // выигрыш пришёл; если от игры уже отошёл — скажем тостом
+      if (this.csSpot) this.casinoRefresh(); else this.toast('🎰 Выигрыш в казино: +' + fmtMoney(e.v), 'big');
     } else if (e.t === 'launch' && !g.s.tips.boat) {   // первая лодка — где деньги
       g.s.tips.boat = true;
       this.toast('⛵ Первая лодка сошла на воду! Деньги за неё — в кассе верфи', 'big');
@@ -124,7 +126,7 @@ class UI {
       $('floorChip').classList.toggle('hot', pend > 0);
       // этаж достроен или вернулся с невыбранным жильцом — окно выбора, когда другие окна закрыты
       if (pend && !this.tenantAsked && $('modal').classList.contains('hidden') && performance.now() > (this.tenantAt || 0)) this.tenantModal();
-      this.casinoRefresh();   // окно казино: деньги в кармане
+      this.casinoRefresh();   // панель казино: деньги в кармане
       const inCash = g.moneyInCash();
       $('cashHint').textContent = inCash >= 1 ? 'в кассах ещё ' + fmtMoney(inCash) : '';
       // сколько улучшений по карману — значок на кнопке
@@ -375,208 +377,156 @@ class UI {
     });
   }
 
-  // ───────── казино (8-й этаж) ─────────
-  // Окно с играми у входа в небоскрёб. Ставки и выигрыши считает Game (slotSpin, wheelSpin, hiloGuess, raceBet), здесь —
-  // только вид и анимации: выигрыш Game зачисляет, когда анимация доиграет (CASINO.*.t). После каждой ставки — сохранение,
-  // чтобы перезагрузкой страницы проигрыш не отменить
+  // ───────── казино: зал на 8-м этаже ─────────
+  // Встал на ковёр у двери небоскрёба — Game переносит игрока в зал (enterRoom), там вид от 3-го лица (CasinoRoom).
+  // Подошёл к месту игры (событие spot) — снизу панель ставки; сама игра видна в зале: барабаны на экране автомата,
+  // колесо на стене, карта на столе, гонка на большом экране. Ставки и выигрыши считает Game (slotSpin, wheelSpin,
+  // hiloGuess, raceBet); выигрыш приходит, когда доиграет анимация. После каждой ставки — сохранение (saveNow)
+  roomEvent(e) {
+    const inside = !!e.room, f = $('fade');
+    f.classList.add('on'); setTimeout(() => f.classList.remove('on'), 60);   // затемнение при входе и выходе
+    $('roomTitle').style.display = inside ? '' : 'none';
+    document.body.classList.toggle('inroom', inside);
+    if (inside) { this.close(); this.hideModal(); } else this.casinoDock(null);
+  }
+
   casinoBetNow() { const g = this.g; return Math.max(0, Math.floor(Math.min(g.s.money, g.casinoMax() * (this.csK || 0.25)))); }
 
-  casinoModal(tab) {
-    const g = this.g;
-    if (!g.casinoOn()) return;
-    clearTimeout(this.csTimer); this.csBusy = false;
-    this.csTab = tab || this.csTab || 'slot';
+  casinoDock(spot) {
+    const d = $('csDock'), sp = spot && CASINO_ROOM.spots[spot];
+    this.csSpot = sp && sp.game ? spot : null;
+    if (!this.csSpot) { d.classList.add('hidden'); return; }
     this.csK = this.csK || 0.25;
-    const tabs = [['slot', '🎰 Слот'], ['wheel', '🎡 Колесо'], ['hilo', '🃏 Карты'], ['race', '🪓 Гонка']];
-    this.modal('<div class="casino"><h2>🎰 Казино «Золотой топор»</h2>' +
-      '<div class="cs-top">В кармане <b id="csMoney"></b> · ставка <b id="csBet"></b></div>' +
+    d.innerHTML = `<div class="cs-head"><b>${sp.name}</b><span>в кармане <b id="csMoney"></b></span></div>` +
       '<div class="cs-row">' + [0.1, 0.25, 0.5, 1].map((k) => `<button data-bk="${k}" class="${k === this.csK ? 'on' : ''}">${k === 1 ? 'Макс' : Math.round(k * 100) + '%'}</button>`).join('') + '</div>' +
-      '<div class="small">Макс. ставка — 3 минуты твоего дохода. Играешь на заработанное; в среднем казино чуть в плюсе.</div>' +
-      '<div class="cs-row tabs">' + tabs.map(([id, n]) => `<button data-ct="${id}" class="${id === this.csTab ? 'on' : ''}">${n}</button>`).join('') + '</div>' +
-      '<div id="csGame"></div><div class="small" id="csStat"></div><button data-close class="ghost">Выйти</button></div>');
-    const box = $('modalBox');
-    box.querySelectorAll('[data-bk]').forEach((b) => {
-      b.onclick = () => { this.csK = +b.dataset.bk; box.querySelectorAll('[data-bk]').forEach((x) => x.classList.toggle('on', x === b)); this.casinoRefresh(); };
+      '<div id="csGame"></div><div class="cs-res" id="csRes">&nbsp;</div><div class="cs-stat" id="csStat"></div>';
+    d.classList.remove('hidden');
+    d.querySelectorAll('[data-bk]').forEach((b) => {
+      b.onclick = () => { this.csK = +b.dataset.bk; d.querySelectorAll('[data-bk]').forEach((x) => x.classList.toggle('on', x === b)); this.casinoRefresh(); };
     });
-    box.querySelectorAll('[data-ct]').forEach((b) => { b.onclick = () => { if (!this.csBusy) this.casinoModal(b.dataset.ct); }; });
     this.casinoGame();
     this.casinoRefresh();
   }
 
-  // деньги, ставка и статистика в окне — зовётся и из update(), пока окно открыто
+  // деньги, ставка и статистика в панели — зовётся и из update(), пока игрок у игры
   casinoRefresh() {
     const g = this.g, m = $('csMoney');
-    if (!m) return;
+    if (!m || !this.csSpot) return;
     const bet = this.casinoBetNow(), cs = g.casinoStats();
     m.textContent = fmtMoney(g.s.money);
-    $('csBet').textContent = fmtMoney(bet);
-    $('csStat').textContent = cs.n ? `Сыграно ${cs.n}: поставлено ${fmtMoney(cs.bet)}, выиграно ${fmtMoney(cs.won)}` : '';
-    $('modalBox').querySelectorAll('[data-bet]').forEach((b) => {
+    $('csStat').textContent = (cs.n ? `сыграно ${cs.n} · поставлено ${fmtMoney(cs.bet)} · выиграно ${fmtMoney(cs.won)} · ` : '') + 'ставка — до 3 минут дохода';
+    $('csDock').querySelectorAll('[data-bet]').forEach((b) => {
       b.disabled = this.csBusy || bet <= 0;
       const s = b.querySelector('.sum'); if (s) s.textContent = fmtMoney(bet);
     });
   }
 
   casinoRes(html) { const r = $('csRes'); if (r) r.innerHTML = html; }
-  casinoCard(c) {   // карта 2…14: В, Д, К, Т — русские обозначения; масть — для красоты
-    const r = c <= 10 ? String(c) : ['В', 'Д', 'К', 'Т'][c - 11], suit = '♠♥♦♣'[Math.floor(Math.random() * 4)];
-    return `<div class="cs-card${suit === '♥' || suit === '♦' ? ' red' : ''}">${r}${suit}</div>`;
-  }
+  casinoCardName(c) { return (c <= 10 ? String(c) : ['В', 'Д', 'К', 'Т'][c - 11]) + '♠♥♦♣'[c % 4]; }   // масть — как на столе в зале
 
   casinoGame() {
-    const g = this.g, el = $('csGame'), t = this.csTab;
-    if (!el) return;
-    if (t === 'slot') {
-      const S = CASINO.slot, row = (arr) => S.sym.map((s, i) => '<span class="nw">' + s + '×' + arr[i] + '</span>').reverse().join(' ');
-      el.innerHTML = '<div class="cs-slot">' + [0, 1, 2].map((i) => `<div class="reel" id="reel${i}">${S.sym[5 - i * 2]}</div>`).join('') + '</div>' +
-        '<div class="cs-res" id="csRes">&nbsp;</div><button class="cs-go" data-bet>Крутить · <span class="sum"></span></button>' +
-        `<div class="small">Три одинаковых: ${row(S.three)}<br>Пара на первых двух: ${row(S.pair)}</div>`;
-      el.querySelector('[data-bet]').onclick = () => this.casinoSlot();
-    } else if (t === 'wheel') {
-      el.innerHTML = '<div class="cs-wheel"><div class="ptr"></div><canvas id="csWheel" width="440" height="440"></canvas></div>' +
-        '<div class="cs-res" id="csRes">&nbsp;</div><button class="cs-go" data-bet>Крутить колесо · <span class="sum"></span></button>';
-      this.drawWheel($('csWheel'));
-      $('csWheel').style.transform = `rotate(${this.csRot || 0}deg)`;
+    const g = this.g, el = $('csGame'), sp = CASINO_ROOM.spots[this.csSpot], room = this.view && this.view.room;
+    if (!el || !sp) return;
+    if (sp.game === 'slot') {
+      el.innerHTML = '<button class="cs-go" data-bet>🎰 Крутить · <span class="sum"></span></button>';
+      el.querySelector('[data-bet]').onclick = () => this.casinoSlot(sp.m);
+    } else if (sp.game === 'wheel') {
+      el.innerHTML = '<button class="cs-go" data-bet>🎡 Крутить колесо · <span class="sum"></span></button>';
       el.querySelector('[data-bet]').onclick = () => this.casinoWheel();
-    } else if (t === 'hilo') {
+    } else if (sp.game === 'hilo') {
       const h = g.s.casino.hilo;
+      if (room) room.showCard(h ? h.card : this.csLastCard || 0);
       if (!h) {
-        el.innerHTML = '<div class="small">Сдаём карту — угадай, следующая больше или меньше. Угадал — банк растёт, можно забрать ' +
-          `или рискнуть дальше (до ${CASINO.hilo.steps} раз). Равная — проигрыш.</div>` + (this.csLastCard ? this.casinoCard(this.csLastCard) : '<div class="cs-card back">🂠</div>') +
-          '<div class="cs-res" id="csRes">&nbsp;</div><button class="cs-go" data-bet>Сдать карту · <span class="sum"></span></button>';
+        el.innerHTML = '<button class="cs-go" data-bet>🃏 Сдать карту · <span class="sum"></span></button>';
         el.querySelector('[data-bet]').onclick = () => {
           const r = g.hiloStart(this.casinoBetNow());
-          this.csLastCard = 0;
           if (!r) { this.casinoRes('Не хватает денег'); return; }
           if (this.saveNow) this.saveNow();
-          this.casinoGame(); this.casinoRefresh();
+          this.csLastCard = 0; this.casinoGame();
+          this.casinoRes(`Карта: ${this.casinoCardName(r.card)} — следующая больше или меньше? Равная — проигрыш`); this.casinoRefresh();
         };
       } else {
         const up = g.hiloMult(h.card, true), dn = g.hiloMult(h.card, false);
-        el.innerHTML = this.casinoCard(h.card) + `<div class="cs-res" id="csRes">Банк: ${fmtMoney(h.pot)}${h.step ? ` · угадано ${h.step} из ${CASINO.hilo.steps}` : ''}</div>` +
-          '<div class="cs-row">' + `<button data-hl="up" ${up ? '' : 'disabled'}>⬆ Больше ×${up || '—'}</button>` +
+        el.innerHTML = `<div class="cs-row"><button data-hl="up" ${up ? '' : 'disabled'}>⬆ Больше ×${up || '—'}</button>` +
           `<button data-hl="down" ${dn ? '' : 'disabled'}>⬇ Меньше ×${dn || '—'}</button></div>` +
           (h.step ? `<button class="cs-go" data-hl="take">Забрать ${fmtMoney(h.pot)}</button>` : '');
         el.querySelectorAll('[data-hl]').forEach((b) => { b.onclick = () => this.casinoHilo(b.dataset.hl); });
       }
-    } else if (t === 'race') {
-      const R = g.raceNext(), names = CASINO.race.names;
-      if (this.csPick === undefined || this.csPick >= names.length) this.csPick = 0;
-      el.innerHTML = '<div class="small">Четверо рубят дерево наперегонки. Выбери, на кого ставишь: у каждого своя форма — свои выплаты.</div>' +
-        names.map((n, i) => `<div class="cs-lane${i === this.csPick ? ' on' : ''}" data-pick="${i}"><span class="nm">${n}</span><span class="od">×${R.odds[i]}</span>` +
-          `<div class="track"><span class="runner" id="run${i}">🪓</span></div><span class="tree">🌲</span></div>`).join('') +
-        '<div class="cs-res" id="csRes">&nbsp;</div><button class="cs-go" data-bet>Старт · <span class="sum"></span></button>';
+    } else if (sp.game === 'race') {
+      const R = g.raceNext();
+      if (this.csPick === undefined) this.csPick = 0;
+      el.innerHTML = '<div class="cs-row runners">' + CASINO.race.names.map((n, i) => `<button data-pick="${i}" class="${i === this.csPick ? 'on' : ''}">${n}<br><b>×${R.odds[i]}</b></button>`).join('') + '</div>' +
+        '<button class="cs-go" data-bet>🪓 Старт · <span class="sum"></span></button>';
       el.querySelectorAll('[data-pick]').forEach((b) => {
-        b.onclick = () => { if (this.csBusy) return; this.csPick = +b.dataset.pick; el.querySelectorAll('[data-pick]').forEach((x) => x.classList.toggle('on', x === b)); };
+        b.onclick = () => {
+          if (this.csBusy) return;
+          this.csPick = +b.dataset.pick;
+          el.querySelectorAll('[data-pick]').forEach((x) => x.classList.toggle('on', x === b));
+          if (room) room.raceIdle();
+        };
       });
       el.querySelector('[data-bet]').onclick = () => this.casinoRace();
+      if (room) room.raceIdle();
     }
   }
 
-  // слот: барабаны мелькают и встают по одному — на то, что уже выпало в Game
-  casinoSlot() {
-    const g = this.g, S = CASINO.slot, r = g.slotSpin(this.casinoBetNow());
-    if (!r) { this.casinoRes('Не хватает денег'); return; }
+  // общий ход ставки: сохранение, «идёт игра» (кнопки выключены), итог в панели — когда доиграет анимация в зале
+  casinoAfter(dur, done) {
     if (this.saveNow) this.saveNow();
     this.csBusy = true; this.casinoRefresh(); this.casinoRes('&nbsp;');
-    const reels = [0, 1, 2].map((i) => $('reel' + i)), t0 = performance.now();
-    const tick = () => {
-      if (!document.body.contains(reels[0])) { this.csBusy = false; return; }
-      const t = (performance.now() - t0) / 1000;
-      reels.forEach((el, i) => {
-        const spin = t < 0.6 + i * 0.45;
-        el.textContent = spin ? S.sym[Math.floor(Math.random() * S.sym.length)] : S.sym[r.reels[i]];
-        el.classList.toggle('spin', spin);
-      });
-      if (t < 1.6) { this.csTimer = setTimeout(tick, 70); return; }
-      this.csBusy = false;
-      this.casinoRes(r.win > 0 ? `<span class="win">+${fmtMoney(r.win)}</span> · ×${r.mult}${r.reels[0] === 5 && r.mult === S.three[5] ? ' · ДЖЕКПОТ!' : ''}` : 'Мимо');
-      this.casinoRefresh();
-    };
-    tick();
+    clearTimeout(this.csTimer);
+    this.csTimer = setTimeout(() => { this.csBusy = false; done(); this.casinoRefresh(); }, dur * 1000);
   }
 
-  drawWheel(cv) {
-    const x = cv.getContext('2d'), m = CASINO.wheel.m, n = m.length, R = cv.width / 2, st = (Math.PI * 2) / n;
-    const col = { 0: '#3b4550', 0.5: '#3d6b95', 1: '#2a8c8c', 1.5: '#2f9e54', 2: '#e08a1c', 3: '#8e5bd0', 7: '#e5b400' };
-    for (let i = 0; i < n; i++) {
-      const a0 = -Math.PI / 2 + i * st;
-      x.beginPath(); x.moveTo(R, R); x.arc(R, R, R - 4, a0, a0 + st); x.closePath();
-      x.fillStyle = col[m[i]] || '#555'; x.fill(); x.strokeStyle = '#fff'; x.lineWidth = 3; x.stroke();
-      x.save(); x.translate(R, R); x.rotate(a0 + st / 2);
-      x.fillStyle = '#fff'; x.font = '900 26px Nunito, sans-serif'; x.textAlign = 'right'; x.textBaseline = 'middle';
-      x.fillText(m[i] ? '×' + m[i] : '0', R - 18, 0);
-      x.restore();
-    }
-    x.beginPath(); x.arc(R, R, 34, 0, Math.PI * 2); x.fillStyle = '#fff'; x.fill();
-    x.font = '900 34px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('🪓', R, R + 2);
+  casinoSlot(m) {
+    const S = CASINO.slot, r = this.g.slotSpin(this.casinoBetNow());
+    if (!r) { this.casinoRes('Не хватает денег'); return; }
+    if (this.view.room) this.view.room.spinSlot(m, r.reels, S.t - 0.2);
+    const sy = r.reels.map((i) => S.sym[i]).join(' ');
+    this.casinoAfter(S.t - 0.1, () => this.casinoRes(r.win > 0
+      ? `${sy} — <span class="win">+${fmtMoney(r.win)}</span> ×${r.mult}${r.reels[0] === 5 && r.mult === S.three[5] ? ' · ДЖЕКПОТ!' : ''}` : `${sy} — мимо`));
   }
 
-  // колесо: сектор, выпавший в Game, приезжает под стрелку (всегда крутим вперёд, 6+ оборотов)
+  // колесо: сектор, выпавший в Game, приезжает под стрелку (всегда вперёд, 5+ оборотов; угол — по часовой)
   casinoWheel() {
-    const g = this.g, r = g.wheelSpin(this.casinoBetNow()), cv = $('csWheel');
+    const W = CASINO.wheel, r = this.g.wheelSpin(this.casinoBetNow());
     if (!r) { this.casinoRes('Не хватает денег'); return; }
-    if (this.saveNow) this.saveNow();
-    const n = CASINO.wheel.m.length, step = 360 / n;
+    const step = 360 / W.m.length;
     this.csRot = (Math.floor((this.csRot || 0) / 360) + 6) * 360 + (360 - (r.sector + 0.5) * step);
-    this.csBusy = true; this.casinoRefresh(); this.casinoRes('&nbsp;');
-    cv.style.transform = `rotate(${this.csRot}deg)`;
-    this.csTimer = setTimeout(() => {
-      this.csBusy = false;
-      this.casinoRes(r.win > 0 ? `<span class="win">+${fmtMoney(r.win)}</span> · ×${r.mult}` : 'Ноль — мимо');
-      this.casinoRefresh();
-    }, 3300);
+    if (this.view.room) this.view.room.spinWheel(this.csRot, W.t - 0.2);
+    this.casinoAfter(W.t - 0.1, () => this.casinoRes(r.win > 0 ? `<span class="win">+${fmtMoney(r.win)}</span> · ×${r.mult}` : 'Ноль — мимо'));
   }
 
   casinoHilo(act) {
-    const g = this.g;
+    const g = this.g, room = this.view.room;
     if (act === 'take') {
       const v = g.hiloTake();
-      this.csLastCard = 0;
       if (this.saveNow) this.saveNow();
-      this.casinoGame(); this.casinoRes(`<span class="win">+${fmtMoney(v)}</span> — забрал`); this.casinoRefresh();
+      this.csLastCard = 0; this.casinoGame(); this.casinoRes(`<span class="win">+${fmtMoney(v)}</span> — забрал`); this.casinoRefresh();
       return;
     }
     const r = g.hiloGuess(act === 'up');
     if (!r) return;
     if (this.saveNow) this.saveNow();
-    if (r.ok && !r.done) { this.casinoGame(); this.casinoRes(`Угадал! Банк: ${fmtMoney(r.pot)}`); }
-    else {
-      this.csLastCard = r.card;
-      this.casinoGame();
-      this.casinoRes(r.ok ? `<span class="win">+${fmtMoney(r.pot)}</span> — угадано ${CASINO.hilo.steps} из ${CASINO.hilo.steps}, банк твой` : 'Не угадал — банк сгорел');
-    }
+    if (room) room.showCard(r.card);
+    this.csLastCard = r.ok && !r.done ? 0 : r.card;
+    this.casinoGame();
+    this.casinoRes(!r.ok ? `${this.casinoCardName(r.card)} — не угадал, банк сгорел`
+      : r.done ? `<span class="win">+${fmtMoney(r.pot)}</span> — угадано ${CASINO.hilo.steps} из ${CASINO.hilo.steps}, банк твой`
+        : `${this.casinoCardName(r.card)} — угадал! Банк: ${fmtMoney(r.pot)}`);
     this.casinoRefresh();
   }
 
-  // гонка: победитель уже выбран в Game — он и добегает первым, остальные отстают
+  // гонка: победителя выбирает Game, экран в зале показывает, как он добегает первым
   casinoRace() {
-    const g = this.g, pick = this.csPick || 0, r = g.raceBet(this.casinoBetNow(), pick);
+    const g = this.g, pick = this.csPick || 0, odds = g.raceNext().odds.slice(), r = g.raceBet(this.casinoBetNow(), pick);
     if (!r) { this.casinoRes('Не хватает денег'); return; }
-    if (this.saveNow) this.saveNow();
-    this.csBusy = true; this.casinoRefresh(); this.casinoRes('&nbsp;');
-    const n = CASINO.race.names.length, T = CASINO.race.t - 0.4;
-    const fin = [...Array(n)].map((_, i) => (i === r.winner ? T : T * (1.06 + Math.random() * 0.2)));
-    const ph = [...Array(n)].map(() => Math.random() * 6);
-    const runs = [...Array(n)].map((_, i) => $('run' + i)), t0 = performance.now();
-    const tick = () => {
-      if (!document.body.contains(runs[0])) { this.csBusy = false; return; }
-      const t = (performance.now() - t0) / 1000;
-      runs.forEach((el, i) => {
-        const p = Math.min(1, t / fin[i] + (t < fin[i] ? 0.015 * Math.sin(t * 9 + ph[i]) : 0));
-        el.style.left = `calc(${(Math.max(0, p) * 100).toFixed(1)}% - ${(Math.max(0, p) * 22).toFixed(1)}px)`;
-      });
-      if (t < T + 0.15) { this.csTimer = setTimeout(tick, 50); return; }
-      this.csBusy = false;
-      const lane = $('csGame').querySelectorAll('.cs-lane')[r.winner];
-      if (lane) lane.classList.add('win');
-      const name = CASINO.race.names[r.winner];
-      this.casinoRes(r.win > 0 ? `🏆 ${name} первый! <span class="win">+${fmtMoney(r.win)}</span>` : `🏆 Первым дорубил ${name} — ставка сгорела`);
-      const b = $('csGame').querySelector('[data-bet]');
-      if (b) { b.innerHTML = 'Новая гонка'; b.disabled = false; b.removeAttribute('data-bet'); b.onclick = () => { const keep = $('csRes').innerHTML; this.casinoGame(); this.casinoRefresh(); this.casinoRes(keep); }; }
-      this.casinoRefresh();
-    };
-    tick();
+    const dur = CASINO.race.t - 0.4, name = CASINO.race.names[r.winner];
+    if (this.view.room) this.view.room.race(odds, r.winner, pick, dur);
+    this.casinoAfter(dur + 0.2, () => {
+      const res = r.win > 0 ? `🏆 ${name} первый! <span class="win">+${fmtMoney(r.win)}</span>` : `🏆 Первым дорубил ${name} — ставка сгорела`;
+      this.casinoGame(); this.casinoRes(res);   // у следующей гонки — новые шансы
+    });
   }
 
   // сохранение прошлой версии игра не принимает (другое начало) — объясняем, а не молча начинаем заново

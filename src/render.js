@@ -176,6 +176,18 @@ class View {
     this.camera.fov = w < h ? 55 : 40;
     this.camera.updateProjectionMatrix();
     this.labels.w = w; this.labels.h = h;
+    if (this.room) { this.room.camera.aspect = w / h; this.room.camera.updateProjectionMatrix(); }
+  }
+
+  // зал казино (room.js): строится при первом входе; свой кадр, своя камера, подписи — у мест игр
+  frameRoom(dt) {
+    if (!this.room) { this.room = new CasinoRoom(this); this.resize(); }
+    if (this.roomFresh) { this.room.enter(); this.roomFresh = false; }
+    this.labels.root.classList.remove('hide');
+    this.labels.begin();
+    this.room.frame(dt);
+    this.labels.end();
+    this.renderer.render(this.room.scene, this.room.camera);
   }
 
   // солнце с тенью + отражения неба (look.js)
@@ -775,6 +787,8 @@ class View {
 
   onEvent(e) {
     const g = this.g;
+    if (e.t === 'room') { if (e.room) this.roomFresh = true; else this.camTarget.set(g.pl.x, 0, g.pl.z); return; }
+    if (g.pl.room) return;   // в зале казино мир не рисуется — полёты, всплески и облёты не копим
     if (e.t === 'x') {
       if (this.flights.length > 400) return;
       const near = (ref) => {
@@ -837,6 +851,8 @@ class View {
   frame(dt) {
     const g = this.g, s = g.s, pl = g.pl;
     this.t += dt;
+    if (pl.room) { this.frameRoom(dt); return; }   // игрок в зале казино — рисуем зал, мир ждёт
+    this.labels.cam = this.camera;
     this.syncStatic();
     for (const id in this.inst) this.ic[id] = 0;
     this.labels.begin();
@@ -1343,7 +1359,7 @@ class View {
     }
     // казино: куда встать
     if (g.casinoOn() && Math.abs(CASINO.x - pl.x) < 22 && Math.abs(CASINO.z - pl.z) < 22) {
-      this.labels.set('casino', CASINO.x, 4.7, CASINO.z - 1.4, '<div class="t">🎰 Казино</div><div class="row">встань на ковёр — сыграть</div>', 'station');
+      this.labels.set('casino', CASINO.x, 4.7, CASINO.z - 1.4, '<div class="t">🎰 Казино</div><div class="row">встань на ковёр — войдёшь в зал</div>', 'station');
     }
     // закрытые зоны
     for (const z of ZONES) {

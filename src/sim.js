@@ -410,7 +410,7 @@ class Game {
     s.t += dt;
     if (!this.fast) s.playT += dt;
     this.cashierHere = false;
-    if (!this.fast) { this.movePlayer(dt); this.playerAct(dt); }
+    if (!this.fast) { if (this.pl.room) this.roomStep(dt); else { this.movePlayer(dt); this.playerAct(dt); } }
     if (this.loose.length) this.looseStep(dt);
     for (const w of this.workers) this.workerStep(w, dt);
     this.lightStep(dt);
@@ -488,7 +488,7 @@ class Game {
     else if (t.k === 'pad') this.payPad(t.id, dt);
     else if (t.k === 'plot') this.plotWork(pl, t.i, dt, true, true);
     else if (t.k === 'cash') this.cashierHere = true;
-    else if (t.k === 'casino' && entered && !this.soft) this.ev({ t: 'casino' });   // встал на ковёр казино — окно с играми
+    else if (t.k === 'casino' && entered && !this.soft) this.enterRoom();   // встал на ковёр казино — заходит в зал
   }
 
   playerPile(id, dt) {
@@ -1674,6 +1674,47 @@ class Game {
     this.pay(n * TUNE.raftCost);
     const c = this.pc('raftp'); c.beam = (c.beam || 0) + n;
     this.ev({ t: 'raft', n });
+  }
+
+  // ───────── зал казино: игрок ходит сам, вид от 3-го лица ─────────
+  // Пока игрок в зале (pl.room), в мире он стоит у двери (pl.x, pl.z не меняются), мир живёт без него. Свои координаты
+  // зала — pl.rx, pl.rz, pl.rface; ввод уже повёрнут по камере зала (main.js). В сохранение не идёт: после загрузки — снаружи
+  enterRoom() {
+    const pl = this.pl, R = CASINO_ROOM;
+    pl.room = 'casino'; pl.rx = R.spawn[0]; pl.rz = R.spawn[1]; pl.rface = Math.PI; pl.spot = null; pl.moving = false;
+    this.ev({ t: 'room', room: 'casino' });
+  }
+  leaveRoom() {
+    const pl = this.pl;
+    pl.room = null; pl.spot = null; pl.moving = false;
+    pl.x = CASINO.x; pl.z = CASINO.z + 2.4; pl.face = 0;   // перед ковром, лицом от двери — чтобы сразу не зайти снова
+    pl.on = null;
+    this.ev({ t: 'room', room: null });
+  }
+  roomFree(x, z) {
+    const R = CASINO_ROOM, r = R.r;
+    if (Math.abs(x) > R.w / 2 - r || Math.abs(z) > R.d / 2 - r) return false;
+    for (const b of R.solids) if (Math.abs(x - b.x) < b.w / 2 + r && Math.abs(z - b.z) < b.d / 2 + r) return false;
+    return true;
+  }
+  roomStep(dt) {
+    const pl = this.pl, R = CASINO_ROOM;
+    const vx = this.input.x, vz = this.input.z, m = Math.hypot(vx, vz);
+    pl.moving = m > 0.05;
+    if (pl.moving) {
+      pl.rface = Math.atan2(vx, vz);
+      const k = R.speed * Math.min(1, m) / m * dt, n = Math.max(1, Math.ceil(Math.hypot(vx * k, vz * k) / 0.2));
+      for (let i = 0; i < n; i++) {   // по осям отдельно — вдоль стены скользит, а не застревает
+        if (this.roomFree(pl.rx + vx * k / n, pl.rz)) pl.rx += vx * k / n;
+        if (this.roomFree(pl.rx, pl.rz + vz * k / n)) pl.rz += vz * k / n;
+      }
+    }
+    let spot = null;
+    for (const id in R.spots) { const p = R.spots[id]; if (Math.abs(pl.rx - p.x) <= p.w / 2 && Math.abs(pl.rz - p.z) <= p.d / 2) { spot = id; break; } }
+    if (spot === pl.spot) return;
+    pl.spot = spot;
+    if (spot === 'exit') { this.leaveRoom(); return; }
+    this.ev({ t: 'spot', id: spot });
   }
 
   // ───────── казино (8-й этаж) ─────────

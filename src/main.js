@@ -40,6 +40,7 @@ window.lesopilkaReplace = (data) => {
   const view = new View($('c'), game, $('labels'));
   const ui = new UI(game, sfx);
   ui.saveNow = () => writeSave(game);   // казино сохраняет сразу после ставки — перезагрузкой проигрыш не отменить
+  view.ui = ui;   // зал казино берёт из интерфейса выбранного в гонке лесоруба
   ui.view = view;   // список рабочих подсвечивает их в мире и показывает камерой
   const input = new Input($('c'), game, view, ui, sfx);
   window.__game = game;
@@ -82,7 +83,10 @@ window.lesopilkaReplace = (data) => {
     let dt = (now - last) / 1000;
     last = now;
     if (dt > 0.25) dt = 0.25;
-    if (!bot) input.update();
+    if (!bot) {
+      input.update();
+      if (game.pl.room && view.room) view.room.rotateInput(game.input);   // в зале «вверх» — от камеры за спиной
+    }
     acc += dt * speed;
     let n = 0;
     while (acc >= STEP && n < 20 * speed) { if (bot) bot.step(STEP); game.step(STEP); acc -= STEP; n++; }
